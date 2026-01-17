@@ -143,41 +143,45 @@ $tagArr = array_unique($tagArr); sort($tagArr);
         .col-hidden { display: none !important; }
         .table-font { font-size: 0.75rem; } 
         
-        /* --- STICKY COLUMN LOGIC (FIXED) --- */
-        .col-fix-check { position: sticky; left: 0; z-index: 30; width: 50px; min-width: 50px; max-width: 50px; }
-        .col-fix-tags { position: sticky; left: 50px; z-index: 30; width: 100px; min-width: 100px; max-width: 100px; }
-        .col-fix-iccid { position: sticky; left: 150px; z-index: 30; width: 160px; min-width: 160px; max-width: 160px; }
-        .col-fix-cust { position: sticky; left: 310px; z-index: 30; width: 220px; min-width: 220px; max-width: 220px; } 
+        /* --- STICKY COLUMN LOGIC (STRICT) --- */
         
-        /* Usage Column (Wider for Details) */
-        .col-usage { width: 300px; min-width: 300px; }
-
-        /* Other Columns Standard */
-        .col-std { min-width: 120px; }
-        .col-sm { min-width: 80px; }
-
-        /* HEADER Z-INDEX MUST BE HIGHER THAN BODY */
-        thead .col-fix-check, thead .col-fix-tags, thead .col-fix-iccid, thead .col-fix-cust { z-index: 40; } 
-
-        /* Right Sticky (Action) */
-        .sticky-right { position: sticky; right: 0; z-index: 30; border-left: 1px solid #e2e8f0; }
-        thead .sticky-right { z-index: 40; }
-        .dark .sticky-right { border-left: 1px solid #374151; }
-
-        /* Borders for Separation */
+        /* Definisi Lebar & Posisi Strict untuk Kolom Fixed */
+        
+        /* 1. CHECKBOX (Width 50px) */
+        .w-col-check { width: 50px; min-width: 50px; max-width: 50px; left: 0; }
+        
+        /* 2. TAGS (Width 100px | Left 50px) */
+        .w-col-tags { width: 100px; min-width: 100px; max-width: 100px; left: 50px; }
+        
+        /* 3. ICCID (Width 160px | Left 150px) */
+        .w-col-iccid { width: 160px; min-width: 160px; max-width: 160px; left: 150px; }
+        
+        /* 4. CUSTOMER (Width 220px | Left 310px) */
+        /* Note: 50 + 100 + 160 = 310px */
+        .w-col-cust { width: 230px; min-width: 230px; max-width: 220px; left: 310px; }
+        
+        /* Base Sticky Style */
+        .sticky-col { position: sticky; z-index: 20; }
+        th.sticky-col { z-index: 30; } /* Header always top */
+        
+        /* Border Pemisah untuk Kolom Fixed Terakhir (Customer) */
         .border-r-sticky { border-right: 1px solid #e2e8f0; }
         .dark .border-r-sticky { border-right: 1px solid #374151; }
         
-        /* Background Colors (CRITICAL FOR STICKY) */
+        /* Background untuk mencegah tembus pandang */
         .bg-sticky-light { background-color: #ffffff; }
         thead .bg-sticky-light { background-color: #f8fafc; } 
         tr:hover .bg-sticky-light { background-color: #f8fafc; }
 
-        .dark .bg-sticky-dark { background-color: #1F2937; } /* Dark Card */
-        thead .bg-sticky-dark { background-color: #1F2937; } /* Header Dark */
-        .dark tr:hover .bg-sticky-dark { background-color: #374151; } /* Hover Dark */
+        .dark .bg-sticky-dark { background-color: #1F2937; }
+        thead .bg-sticky-dark { background-color: #1F2937; }
+        .dark tr:hover .bg-sticky-dark { background-color: #374151; }
 
-        /* Pagination */
+        /* Action Column Fixed Right */
+        .sticky-right { position: sticky; right: 0; z-index: 20; border-left: 1px solid #e2e8f0; }
+        .dark .sticky-right { border-left: 1px solid #374151; }
+
+        /* Pagination Button */
         .btn-page {
             width: 2.25rem; height: 2.25rem; display: flex; align-items: center; justify-content: center;
             border-radius: 0.5rem; border: 1px solid #E2E8F0; font-size: 0.875rem; font-weight: 500; transition: all 0.2s;
@@ -296,31 +300,29 @@ $tagArr = array_unique($tagArr); sort($tagArr);
 
                 <div class="rounded-xl bg-white dark:bg-darkcard shadow-sm overflow-hidden border border-slate-100 dark:border-slate-800 relative">
                     <div class="overflow-x-auto">
-                        <table class="table-fixed w-full text-left border-collapse table-font min-w-[1550px]">
+                        <table class="w-full text-left border-collapse table-font min-w-[1300px]">
                             <thead class="bg-slate-50 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
                                 <tr>
-                                    <th class="px-4 py-3 text-center align-middle col-fix-check bg-sticky-light dark:bg-sticky-dark">
+                                    <th class="px-4 py-3 text-center align-middle sticky-col w-col-check bg-sticky-light dark:bg-sticky-dark">
                                         <div class="flex items-center justify-center">
                                             <input type="checkbox" id="selectAll" class="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 text-primary cursor-pointer focus:ring-0 bg-white dark:bg-slate-700">
                                         </div>
                                     </th>
-                                    <th class="col-tags px-4 py-3 font-bold uppercase align-middle col-fix-tags bg-sticky-light dark:bg-sticky-dark">Tags</th>
-                                    <th class="col-iccid px-4 py-3 font-bold uppercase align-middle col-fix-iccid bg-sticky-light dark:bg-sticky-dark">ICCID</th>
-                                    <th class="col-customer px-4 py-3 font-bold uppercase align-middle col-fix-cust bg-sticky-light dark:bg-sticky-dark border-r-sticky">Customer</th> 
+                                    <th class="col-tags px-4 py-3 font-bold uppercase align-middle sticky-col w-col-tags bg-sticky-light dark:bg-sticky-dark">Tags</th>
+                                    <th class="col-iccid px-4 py-3 font-bold uppercase align-middle sticky-col w-col-iccid bg-sticky-light dark:bg-sticky-dark">ICCID</th>
+                                    <th class="col-customer px-4 py-3 font-bold uppercase align-middle sticky-col w-col-cust bg-sticky-light dark:bg-sticky-dark border-r-sticky">Customer</th> 
                                     
-                                    <th class="col-level px-4 py-3 font-bold uppercase col-sm align-middle">Level</th>
-                                    <th class="col-project px-4 py-3 font-bold uppercase col-std align-middle">Project</th>
-                                    <th class="col-msisdn px-4 py-3 font-bold uppercase col-std align-middle">MSISDN</th>
-                                    <th class="col-imsi px-4 py-3 font-bold uppercase col-std align-middle">IMSI</th>
-                                    <th class="col-profile px-4 py-3 font-bold uppercase col-std align-middle">Profile</th>
-                                    <th class="col-status px-4 py-3 font-bold uppercase text-center col-sm align-middle">Status</th>
-                                    <th class="col-package px-4 py-3 font-bold uppercase text-center col-sm align-middle">Package</th>
+                                    <th class="col-level px-4 py-3 font-bold uppercase w-[80px] align-middle">Level</th>
+                                    <th class="col-project px-4 py-3 font-bold uppercase min-w-[80px] align-middle">Project</th>
+                                    <th class="col-msisdn px-4 py-3 font-bold uppercase align-middle">MSISDN</th>
+                                    <th class="col-imsi px-4 py-3 font-bold uppercase align-middle">IMSI</th>
+                                    <th class="col-profile px-4 py-3 font-bold uppercase align-middle">Profile</th>
+                                    <th class="col-status px-4 py-3 font-bold uppercase text-center align-middle">Status</th>
+                                    <th class="col-package px-4 py-3 font-bold uppercase text-center align-middle">Package</th>
+                                    <th class="col-usage px-4 py-3 font-bold uppercase min-w-[180px] align-middle">Usage</th>
+                                    <th class="col-dates px-4 py-3 font-bold uppercase text-right align-middle">Active/Exp</th>
                                     
-                                    <th class="col-usage px-4 py-3 font-bold uppercase col-usage align-middle">Usage</th>
-                                    
-                                    <th class="col-dates px-4 py-3 font-bold uppercase text-right col-std align-middle">Active/Exp</th>
-                                    
-                                    <th class="col-action px-4 py-3 font-bold uppercase text-right align-middle sticky-right bg-sticky-light dark:bg-sticky-dark border-l-sticky" style="width:100px;">Action</th>
+                                    <th class="col-action px-4 py-3 font-bold uppercase text-right align-middle sticky-right bg-sticky-light dark:bg-sticky-dark">Action</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
@@ -333,31 +335,29 @@ $tagArr = array_unique($tagArr); sort($tagArr);
                                     $pct = ($totalMB > 0) ? ($usedMB / $totalMB) * 100 : 0;
                                 ?>
                                 <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
-                                    <td class="px-4 py-3 text-center align-middle col-fix-check bg-sticky-light dark:bg-sticky-dark">
+                                    <td class="px-4 py-3 text-center align-middle sticky-col w-col-check bg-sticky-light dark:bg-sticky-dark">
                                         <div class="flex items-center justify-center">
                                             <input type="checkbox" name="sim_ids[]" value="<?= $iccid ?>" class="sim-check w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 text-primary cursor-pointer focus:ring-0 bg-white dark:bg-slate-700">
                                         </div>
                                     </td>
                                     
-                                    <td class="col-tags px-4 py-3 align-middle col-fix-tags bg-sticky-light dark:bg-sticky-dark">
+                                    <td class="col-tags px-4 py-3 align-middle sticky-col w-col-tags bg-sticky-light dark:bg-sticky-dark">
                                         <div class="flex flex-col gap-1 justify-center">
                                             <div class="flex flex-wrap gap-1">
-                                                <?php 
-                                                // FIX: Added null check
-                                                foreach(array_filter(explode(',', $row['tags'] ?? '')) as $tag): ?>
+                                                <?php foreach(array_filter(explode(',', $row['tags'])) as $tag): ?>
                                                     <span class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px] border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300"><?= trim($tag) ?></span>
                                                 <?php endforeach; ?>
                                             </div>
-                                            <button onclick="openTagModal('<?= $iccid ?>', '<?= htmlspecialchars($row['tags'] ?? '') ?>')" class="text-[10px] text-primary dark:text-indigo-400 font-bold hover:underline w-fit">Edit</button>
+                                            <button onclick="openTagModal('<?= $iccid ?>', '<?= htmlspecialchars($row['tags']) ?>')" class="text-[10px] text-primary dark:text-indigo-400 font-bold hover:underline w-fit">Edit</button>
                                         </div>
                                     </td>
 
-                                    <td class="col-iccid px-4 py-3 align-middle col-fix-iccid bg-sticky-light dark:bg-sticky-dark">
-                                        <span class="block font-bold text-primary dark:text-indigo-400 font-mono select-all truncate"><?= $iccid ?></span>
+                                    <td class="col-iccid px-4 py-3 align-middle sticky-col w-col-iccid bg-sticky-light dark:bg-sticky-dark">
+                                        <span class="block font-bold text-primary dark:text-indigo-400 font-mono select-all"><?= $iccid ?></span>
                                     </td>
                                     
-                                    <td class="col-customer px-4 py-3 align-middle whitespace-nowrap col-fix-cust bg-sticky-light dark:bg-sticky-dark border-r-sticky">
-                                        <span class="font-bold text-slate-800 dark:text-white block truncate w-full" title="<?= $row['company_name'] ?>"><?= $row['company_name'] ?></span>
+                                    <td class="col-customer px-4 py-3 align-middle whitespace-nowrap sticky-col w-col-cust bg-sticky-light dark:bg-sticky-dark border-r-sticky">
+                                        <span class="font-bold text-slate-800 dark:text-white block truncate max-w-[200px]" title="<?= $row['company_name'] ?>"><?= $row['company_name'] ?></span>
                                     </td>
 
                                     <td class="col-level px-4 py-3 align-middle whitespace-nowrap">
@@ -369,27 +369,46 @@ $tagArr = array_unique($tagArr); sort($tagArr);
                                             <i class="ph ph-briefcase text-slate-400"></i> <span class="<?= $isCustom ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-600 dark:text-slate-300' ?>"><?= $displayProject ?></span>
                                         </div>
                                     </td>
-                                    <td class="col-msisdn px-4 py-3 align-middle font-mono text-slate-600 dark:text-slate-300 truncate"><?= $row['msisdn'] ?></td>
-                                    <td class="col-imsi px-4 py-3 align-middle font-mono text-slate-600 dark:text-slate-300 truncate"><?= $row['imsi'] ?></td>
-                                    <td class="col-profile px-4 py-3 align-middle font-mono text-slate-500 dark:text-slate-400 truncate"><?= $row['profile_iccid'] ?></td>
+                                    <td class="col-msisdn px-4 py-3 align-middle font-mono text-slate-600 dark:text-slate-300"><?= $row['msisdn'] ?></td>
+                                    <td class="col-imsi px-4 py-3 align-middle font-mono text-slate-600 dark:text-slate-300"><?= $row['imsi'] ?></td>
+                                    <td class="col-profile px-4 py-3 align-middle font-mono text-slate-500 dark:text-slate-400"><?= $row['profile_iccid'] ?></td>
                                     <td class="col-status px-4 py-3 align-middle text-center"><?= getRealtimeStatusBadge($row['status']) ?></td>
                                     <td class="col-package px-4 py-3 align-middle text-center"><?= getPackageStatusToggle($iccid, $row['package_status']) ?></td>
-                                    
+                
                                     <td class="col-usage px-4 py-3 align-middle">
                                         <div class="flex flex-col w-full gap-1.5">
                                             <div class="flex justify-between items-baseline">
-                                                <span class="text-sm font-bold text-slate-800 dark:text-white"><?= number_format($usedMB, 2) ?> MB</span>
-                                                <span class="text-xs text-slate-400">/ <?= number_format($totalMB, 0) ?> MB</span>
+                                                <span class="text-xs font-bold text-slate-800 dark:text-white">
+                                                    <?= number_format($usedMB, 2) ?> MB
+                                                </span>
+                                                <span class="text-xs text-slate-400">
+                                                    / <?= number_format($totalMB, 0) ?> MB
+                                                </span>
                                             </div>
-                                            <div class="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
-                                                <div class="bg-indigo-600 h-full rounded-full transition-all duration-500" style="width: <?= min($pct, 100) ?>%"></div>
-                                            </div>
-                                            <div class="text-right">
-                                                <span class="text-[10px] font-bold text-slate-500 dark:text-slate-400"><?= number_format($pct, 1) ?>% Used</span>
+
+                                            <?php
+                                                $textColor = $pct >= 50
+                                                    ? 'text-white'
+                                                    : 'text-slate-600 dark:text-slate-300';
+                                            ?>
+
+                                            <!-- Progress bar -->
+                                            <div class="relative w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
+
+                                                <!-- Bar -->
+                                                <div
+                                                    class="bg-indigo-600 h-full rounded-full transition-all duration-500"
+                                                    style="width: <?= min($pct, 100) ?>%"
+                                                ></div>
+
+                                                <!-- Percentage (always centered) -->
+                                                <span class="absolute inset-0 flex items-center justify-center text-[8px] font-bold <?= $textColor ?>">
+                                                    <?= number_format($pct, 1) ?>%
+                                                </span>
                                             </div>
                                         </div>
+                 
                                     </td>
-
                                     <td class="col-dates px-4 py-3 align-middle text-right whitespace-nowrap">
                                         <div class="flex flex-col gap-0.5 justify-center h-full">
                                             <span class="font-bold text-emerald-600 dark:text-emerald-400"><?= (!empty($row['active_date'])) ? date("d M Y", $row['active_date']/1000) : '-' ?></span>
@@ -397,7 +416,7 @@ $tagArr = array_unique($tagArr); sort($tagArr);
                                         </div>
                                     </td>
                                     
-                                    <td class="col-action px-4 py-3 align-middle text-right sticky-right bg-sticky-light dark:bg-sticky-dark border-l-sticky">
+                                    <td class="col-action px-4 py-3 align-middle text-right sticky-right bg-sticky-light dark:bg-sticky-dark">
                                         <a href="sim-detail.php?iccid=<?= $iccid ?>" class="inline-flex items-center gap-1 px-3 py-1 bg-white dark:bg-slate-800 border dark:border-slate-600 rounded hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 shadow-sm transition-colors">Detail</a>
                                     </td>
                                 </tr>
@@ -532,6 +551,7 @@ $tagArr = array_unique($tagArr); sort($tagArr);
             }
         }
 
+        // Bulk Logic
         const selectAll = document.getElementById('selectAll');
         const checkboxes = document.querySelectorAll('.sim-check');
         const bulkBar = document.getElementById('bulkActionBar');
@@ -586,4 +606,3 @@ $tagArr = array_unique($tagArr); sort($tagArr);
     </script>
 </body>
 </html>
-}
