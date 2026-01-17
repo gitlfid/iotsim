@@ -4,9 +4,9 @@ session_start();
 
 // --- DATABASE CONFIGURATION ---
 $host = 'localhost';
-$user = 'root';
-$pass = ''; 
-$db   = 'sim2'; 
+$user = 'iotsim_db';
+$pass = 'Kumisan5'; 
+$db   = 'iotsim_db'; 
 
 $conn = new mysqli($host, $user, $pass, $db);
 if ($conn->connect_error) {
