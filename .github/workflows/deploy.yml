@@ -1,0 +1,24 @@
+name: Deploy to aaPanel Direct
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      # 1. Ambil kodingan terbaru dari GitHub
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # 2. Sinkron file ke folder tujuan
+      - name: Sync Files to Server
+        run: |
+          # Tambahan flags:
+          # --no-t : Jangan paksa ubah waktu modifikasi (SOLUSI ERROR ANDA)
+          # --no-o : Jangan ubah owner
+          # --no-g : Jangan ubah group
+          # --no-p : Jangan ubah permission
+          
+          rsync -av --delete --no-o --no-g --no-p --no-t --exclude '.git' --exclude '.github' ./ /www/wwwroot/iotsim/
