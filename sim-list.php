@@ -111,7 +111,7 @@ while($r = $cQ->fetch_assoc()) $compArr[] = $r;
 $projArr = []; $pQ = $conn->query("SELECT DISTINCT IFNULL(custom_project, project_name) as p_name FROM sims LEFT JOIN companies ON sims.company_id = companies.id HAVING p_name IS NOT NULL AND p_name != '' ORDER BY p_name");
 while($r = $pQ->fetch_assoc()) $projArr[] = $r['p_name'];
 
-// FIX: Added null check for tags explode
+// FIX: Added '?? ""' to handle null tags from database
 $tagArr = []; $tQ = $conn->query("SELECT DISTINCT tags FROM sims");
 while($r = $tQ->fetch_assoc()) { 
     foreach(explode(',', $r['tags'] ?? '') as $t) {
@@ -344,11 +344,13 @@ $tagArr = array_unique($tagArr); sort($tagArr);
                                     <td class="col-tags px-4 py-3 align-middle sticky-col w-col-tags bg-sticky-light dark:bg-sticky-dark">
                                         <div class="flex flex-col gap-1 justify-center">
                                             <div class="flex flex-wrap gap-1">
-                                                <?php foreach(array_filter(explode(',', $row['tags'])) as $tag): ?>
+                                                <?php 
+                                                // FIX: Added null check
+                                                foreach(array_filter(explode(',', $row['tags'] ?? '')) as $tag): ?>
                                                     <span class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px] border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300"><?= trim($tag) ?></span>
                                                 <?php endforeach; ?>
                                             </div>
-                                            <button onclick="openTagModal('<?= $iccid ?>', '<?= htmlspecialchars($row['tags']) ?>')" class="text-[10px] text-primary dark:text-indigo-400 font-bold hover:underline w-fit">Edit</button>
+                                            <button onclick="openTagModal('<?= $iccid ?>', '<?= htmlspecialchars($row['tags'] ?? '') ?>')" class="text-[10px] text-primary dark:text-indigo-400 font-bold hover:underline w-fit">Edit</button>
                                         </div>
                                     </td>
 
@@ -392,16 +394,13 @@ $tagArr = array_unique($tagArr); sort($tagArr);
                                                     : 'text-slate-600 dark:text-slate-300';
                                             ?>
 
-                                            <!-- Progress bar -->
                                             <div class="relative w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
 
-                                                <!-- Bar -->
                                                 <div
                                                     class="bg-indigo-600 h-full rounded-full transition-all duration-500"
                                                     style="width: <?= min($pct, 100) ?>%"
                                                 ></div>
 
-                                                <!-- Percentage (always centered) -->
                                                 <span class="absolute inset-0 flex items-center justify-center text-[8px] font-bold <?= $textColor ?>">
                                                     <?= number_format($pct, 1) ?>%
                                                 </span>
