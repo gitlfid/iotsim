@@ -5,9 +5,9 @@
 
 // Konfigurasi Database (Samakan dengan config.php)
 $host = 'localhost';
-$user = 'root';
-$pass = ''; 
-$db   = 'sim2'; 
+$user = 'lfid_iotsim';
+$pass = 'Kumisan5'; 
+$db   = 'lfid_iotsim'; 
 
 $conn = new mysqli($host, $user, $pass, $db);
 if ($conn->connect_error) {
