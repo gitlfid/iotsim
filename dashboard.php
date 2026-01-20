@@ -5,6 +5,7 @@ checkLogin();
 $user_id = $_SESSION['user_id'];
 
 // --- 1. DATA ACCESS CONTROL (LOGIC INTI) ---
+// Kita gunakan helper yang sudah dibuat di config.php
 $allowed_comps = getClientIdsForUser($user_id);
 
 $sim_where_clause = "";
@@ -28,12 +29,10 @@ if ($allowed_comps === 'NONE') {
 $qSim = $conn->query("SELECT COUNT(*) as total FROM sims WHERE 1=1 $sim_where_clause");
 $totalSims = $qSim->fetch_assoc()['total'];
 
-// B. Online vs Offline Status (Sesuai API: 1=Online, 2=Offline)
-// Data diambil dari Database hasil Sync terakhir
-$qOnline = $conn->query("SELECT COUNT(*) as total FROM sims WHERE status = '1' $sim_where_clause");
-$onlineSims = $qOnline->fetch_assoc()['total'];
-
-$offlineSims = $totalSims - $onlineSims; // Sisanya dianggap offline
+// B. Total Active SIMs (Asumsi Status '2' = Active, sesuaikan dengan API Anda)
+$qActive = $conn->query("SELECT COUNT(*) as total FROM sims WHERE status = '2' $sim_where_clause");
+$activeSims = $qActive->fetch_assoc()['total'];
+$inactiveSims = $totalSims - $activeSims;
 
 // C. Total Data Usage (Global)
 $qUsage = $conn->query("SELECT SUM(used_flow) as total_usage FROM sims WHERE 1=1 $sim_where_clause");
@@ -57,6 +56,7 @@ $totalCompanies = $qComp->fetch_assoc()['total'];
 // --- 3. FETCH CHART DATA ---
 
 // Chart 1: Top 10 Companies by Data Usage
+// Query Join sims & companies, sum usage, group by company
 $chartUsageLabels = [];
 $chartUsageData = [];
 
@@ -70,8 +70,12 @@ $sqlChart1 = "SELECT c.company_name, SUM(s.used_flow) as usage_sum
 $resChart1 = $conn->query($sqlChart1);
 while($row = $resChart1->fetch_assoc()){
     $chartUsageLabels[] = $row['company_name'];
-    $chartUsageData[] = round($row['usage_sum'] / 1048576, 2); // Convert to MB
+    // Convert ke MB untuk grafik agar angkanya enak dilihat
+    $chartUsageData[] = round($row['usage_sum'] / 1048576, 2); 
 }
+
+// Chart 2: Status Distribution (Pie)
+// Kita sudah punya $activeSims dan $inactiveSims
 
 // --- 4. TOP 5 SIMs LEADERBOARD ---
 $topSims = [];
@@ -118,11 +122,11 @@ while($row = $resTop->fetch_assoc()) {
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
                     <div>
                         <h1 class="text-2xl font-bold text-slate-800 dark:text-white">Dashboard Overview</h1>
-                        <p class="text-sm text-slate-500 mt-1">Real-time IoT connectivity monitoring.</p>
+                        <p class="text-sm text-slate-500 mt-1">Welcome back, <b><?= $_SESSION['username'] ?></b>! Here is your IoT connectivity summary.</p>
                     </div>
                     <div class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-darkcard rounded-lg border border-slate-100 dark:border-slate-800 shadow-sm text-xs font-medium">
-                        <i class="ph ph-clock text-lg text-primary"></i>
-                        <span>Last Sync: From Database</span>
+                        <i class="ph ph-calendar-blank text-lg text-primary"></i>
+                        <span><?= date('d M Y, H:i') ?></span>
                     </div>
                 </div>
 
@@ -131,41 +135,23 @@ while($row = $resTop->fetch_assoc()) {
                     <div class="bg-white dark:bg-darkcard p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 relative overflow-hidden group">
                         <div class="flex justify-between items-start z-10 relative">
                             <div>
-                                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Inventory</p>
+                                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total SIMs</p>
                                 <h3 class="text-2xl font-bold text-slate-800 dark:text-white"><?= number_format($totalSims) ?></h3>
                             </div>
                             <div class="p-3 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl text-indigo-600 dark:text-indigo-400">
                                 <i class="ph ph-sim-card text-xl"></i>
                             </div>
                         </div>
-                        <div class="mt-4 flex items-center text-xs font-medium text-slate-500">
-                            <span>Total Registered SIMs</span>
+                        <div class="mt-4 flex items-center text-xs font-medium text-emerald-600">
+                            <i class="ph ph-trend-up mr-1"></i> <span>Live Data</span>
                         </div>
+                        <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-indigo-50 dark:bg-indigo-900/10 rounded-full blur-2xl group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/20 transition-colors"></div>
                     </div>
 
                     <div class="bg-white dark:bg-darkcard p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 relative overflow-hidden group">
                         <div class="flex justify-between items-start z-10 relative">
                             <div>
-                                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Online Devices</p>
-                                <h3 class="text-2xl font-bold text-emerald-600 dark:text-emerald-400"><?= number_format($onlineSims) ?></h3>
-                            </div>
-                            <div class="p-3 bg-emerald-50 dark:bg-emerald-900/30 rounded-xl text-emerald-600 dark:text-emerald-400">
-                                <i class="ph ph-wifi-high text-xl"></i>
-                            </div>
-                        </div>
-                        
-                        <div class="mt-4 w-full bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
-                            <div class="bg-emerald-500 h-1.5 rounded-full" style="width: <?= ($totalSims > 0) ? ($onlineSims/$totalSims)*100 : 0 ?>%"></div>
-                        </div>
-                        <div class="mt-1 text-[10px] text-emerald-600 text-right font-bold">
-                            <?= ($totalSims > 0) ? round(($onlineSims/$totalSims)*100, 1) : 0 ?>% Online
-                        </div>
-                    </div>
-
-                    <div class="bg-white dark:bg-darkcard p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 relative overflow-hidden group">
-                        <div class="flex justify-between items-start z-10 relative">
-                            <div>
-                                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Data Usage</p>
+                                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Data Usage</p>
                                 <h3 class="text-2xl font-bold text-slate-800 dark:text-white"><?= $displayUsage ?></h3>
                             </div>
                             <div class="p-3 bg-cyan-50 dark:bg-cyan-900/30 rounded-xl text-cyan-600 dark:text-cyan-400">
@@ -173,8 +159,25 @@ while($row = $resTop->fetch_assoc()) {
                             </div>
                         </div>
                         <div class="mt-4 flex items-center text-xs font-medium text-slate-500">
-                            <span>Accumulated Consumption</span>
+                            <span>Accumulated Volume</span>
                         </div>
+                        <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-cyan-50 dark:bg-cyan-900/10 rounded-full blur-2xl group-hover:bg-cyan-100 transition-colors"></div>
+                    </div>
+
+                    <div class="bg-white dark:bg-darkcard p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 relative overflow-hidden group">
+                        <div class="flex justify-between items-start z-10 relative">
+                            <div>
+                                <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Active Connections</p>
+                                <h3 class="text-2xl font-bold text-slate-800 dark:text-white"><?= number_format($activeSims) ?></h3>
+                            </div>
+                            <div class="p-3 bg-emerald-50 dark:bg-emerald-900/30 rounded-xl text-emerald-600 dark:text-emerald-400">
+                                <i class="ph ph-broadcast text-xl"></i>
+                            </div>
+                        </div>
+                        <div class="mt-4 w-full bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                            <div class="bg-emerald-500 h-1.5 rounded-full" style="width: <?= ($totalSims > 0) ? ($activeSims/$totalSims)*100 : 0 ?>%"></div>
+                        </div>
+                        <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-emerald-50 dark:bg-emerald-900/10 rounded-full blur-2xl group-hover:bg-emerald-100 transition-colors"></div>
                     </div>
 
                     <div class="bg-white dark:bg-darkcard p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 relative overflow-hidden group">
@@ -190,6 +193,7 @@ while($row = $resTop->fetch_assoc()) {
                         <div class="mt-4 flex items-center text-xs font-medium text-slate-500">
                             <span>Managed Clients</span>
                         </div>
+                        <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-orange-50 dark:bg-orange-900/10 rounded-full blur-2xl group-hover:bg-orange-100 transition-colors"></div>
                     </div>
                 </div>
 
@@ -201,14 +205,14 @@ while($row = $resTop->fetch_assoc()) {
                     </div>
 
                     <div class="lg:col-span-1 bg-white dark:bg-darkcard p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col">
-                        <h3 class="font-bold text-slate-800 dark:text-white mb-4">Connectivity Status</h3>
+                        <h3 class="font-bold text-slate-800 dark:text-white mb-4">Connection Status</h3>
                         <div id="chartStatus" class="w-full flex-1 flex items-center justify-center min-h-[300px]"></div>
                     </div>
                 </div>
 
                 <div class="bg-white dark:bg-darkcard rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 overflow-hidden">
                     <div class="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                        <h3 class="font-bold text-slate-800 dark:text-white">Top 5 Data Consumers</h3>
+                        <h3 class="font-bold text-slate-800 dark:text-white">Top 5 Highest Usage SIMs</h3>
                         <a href="sim-list.php" class="text-sm font-medium text-primary hover:underline">View All</a>
                     </div>
                     <div class="overflow-x-auto">
@@ -223,23 +227,12 @@ while($row = $resTop->fetch_assoc()) {
                             </thead>
                             <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
                                 <?php if(!empty($topSims)): foreach($topSims as $row): 
-                                    // Logic Badge: 1=Online (Green), Others=Offline (Gray)
-                                    if ($row['status'] == '1') {
-                                        $statusBadge = '<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 text-xs font-bold border border-emerald-100 dark:border-emerald-800">
-                                            <span class="relative flex h-2 w-2">
-                                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                              <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                                            </span>
-                                            Online
-                                        </span>';
-                                    } else {
-                                        $statusBadge = '<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 text-xs font-bold border border-slate-200 dark:border-slate-700">
-                                            <span class="h-2 w-2 rounded-full bg-slate-400"></span> Offline
-                                        </span>';
-                                    }
+                                    $statusBadge = ($row['status'] == '2') 
+                                        ? '<span class="px-2 py-1 rounded bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400 text-xs font-bold">Active</span>'
+                                        : '<span class="px-2 py-1 rounded bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400 text-xs font-bold">Inactive</span>';
                                 ?>
                                 <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                                    <td class="px-6 py-4 font-mono font-bold text-primary dark:text-indigo-400"><?= $row['iccid'] ?></td>
+                                    <td class="px-6 py-4 font-mono font-bold text-primary"><?= $row['iccid'] ?></td>
                                     <td class="px-6 py-4 font-medium text-slate-700 dark:text-slate-300"><?= $row['company_name'] ?></td>
                                     <td class="px-6 py-4"><?= $statusBadge ?></td>
                                     <td class="px-6 py-4 text-right font-bold text-slate-800 dark:text-white"><?= formatBytes($row['used_flow']) ?></td>
@@ -281,12 +274,12 @@ while($row = $resTop->fetch_assoc()) {
         var chartBar = new ApexCharts(document.querySelector("#chartUsage"), optionsBar);
         chartBar.render();
 
-        // --- 2. Donut Chart (Online vs Offline) ---
+        // --- 2. Donut Chart (Status) ---
         var optionsDonut = {
-            series: [<?php echo $onlineSims; ?>, <?php echo $offlineSims; ?>],
-            labels: ['Online', 'Offline'],
+            series: [<?php echo $activeSims; ?>, <?php echo $inactiveSims; ?>],
+            labels: ['Active', 'Inactive/Suspend'],
             chart: { type: 'donut', height: 320, fontFamily: 'Inter' },
-            colors: ['#10B981', '#E2E8F0'], // Green & Slate
+            colors: ['#10B981', '#E2E8F0'], // Emerald & Slate
             plotOptions: {
                 pie: { 
                     donut: { 
@@ -295,13 +288,10 @@ while($row = $resTop->fetch_assoc()) {
                             show: true, 
                             total: { 
                                 show: true, 
-                                label: 'Online', 
+                                label: 'Total', 
                                 fontSize: '14px', 
                                 fontWeight: 600, 
-                                color: '#64748B',
-                                formatter: function (w) {
-                                    return w.globals.seriesTotals[0] // Show online count in center
-                                }
+                                color: '#64748B' 
                             },
                             value: {
                                 fontSize: '24px',
