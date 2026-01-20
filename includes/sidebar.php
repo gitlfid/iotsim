@@ -30,7 +30,7 @@ if (!function_exists('hasAccess')) {
 
 <aside id="sidebar" class="group fixed left-0 top-0 z-50 flex h-screen w-[280px] flex-col overflow-y-hidden bg-white dark:bg-[#24303F] duration-300 ease-in-out lg:static lg:translate-x-0 -translate-x-full border-r border-slate-100 dark:border-slate-800">
     
-    <div class="flex items-center justify-between gap-2 px-6 py-5.5 lg:py-6.5">
+    <div class="flex items-center justify-between gap-2 px-6 pt-10 pb-6 lg:pt-12 lg:pb-8">
         <a href="dashboard.php" class="flex items-center gap-3">
             <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-lg shadow-indigo-500/20">
                 <i class="ph ph-lightning text-2xl"></i>
@@ -45,7 +45,7 @@ if (!function_exists('hasAccess')) {
     </div>
 
     <div class="no-scrollbar flex flex-col overflow-y-auto duration-300 ease-linear">
-        <nav class="mt-5 px-4 lg:mt-9 lg:px-6">
+        <nav class="mt-2 px-4 lg:mt-4 lg:px-6 pb-10">
             
             <div>
                 <h3 class="mb-4 ml-4 text-xs font-bold text-slate-400 uppercase tracking-wider group-[.is-collapsed]:hidden">
