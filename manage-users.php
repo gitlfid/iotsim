@@ -24,8 +24,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_user'])) {
         $error = "Username already exists!";
     } else {
         // Insert User Baru
+        // Encrypt Password
+        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+
         $stmt = $conn->prepare("INSERT INTO users (username, password, role, company_id) VALUES (?, ?, ?, ?)");
-        $stmt->bind_param("sssi", $username, $password, $role, $company_id);
+        // Gunakan $hashed_password disini
+        $stmt->bind_param("sssi", $username, $hashed_password, $role, $company_id);
         
         if ($stmt->execute()) {
             $success = "User created successfully!";

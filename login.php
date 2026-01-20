@@ -10,28 +10,36 @@ if (isset($_SESSION['user_id'])) {
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $username = $_POST['email']; // Di form input namenya kita set 'email' tapi isinya username/email
+    $username = $_POST['email']; // Di form input namenya 'email' tapi isinya username
     $password = $_POST['password'];
 
-    // Query Cek User
-    $stmt = $conn->prepare("SELECT id, username, role, company_id FROM users WHERE username = ? AND password = ?");
-    // Catatan: Di production, password harusnya pakai password_verify() (Hash), ini contoh plain text sesuai request simple
-    $stmt->bind_param("ss", $username, $password);
+    // 1. Ambil data user berdasarkan username saja dulu
+    // Kita perlu mengambil kolom 'password' juga dari database untuk diverifikasi
+    $stmt = $conn->prepare("SELECT id, username, password, role, company_id FROM users WHERE username = ?");
+    $stmt->bind_param("s", $username);
     $stmt->execute();
     $result = $stmt->get_result();
 
     if ($result->num_rows > 0) {
         $row = $result->fetch_assoc();
         
-        // Set Session
-        $_SESSION['user_id'] = $row['id'];
-        $_SESSION['username'] = $row['username'];
-        $_SESSION['role'] = $row['role'];
-        $_SESSION['company_id'] = $row['company_id'];
+        // 2. Verifikasi Password Hash
+        // password_verify akan mengecek apakah $password cocok dengan hash di database ($row['password'])
+        if (password_verify($password, $row['password'])) {
+            // Password Cocok -> Set Session
+            $_SESSION['user_id'] = $row['id'];
+            $_SESSION['username'] = $row['username'];
+            $_SESSION['role'] = $row['role'];
+            $_SESSION['company_id'] = $row['company_id'];
 
-        header("Location: dashboard.php");
-        exit();
+            header("Location: dashboard.php");
+            exit();
+        } else {
+            // Password Salah
+            $error = "Invalid username or password!";
+        }
     } else {
+        // Username tidak ditemukan
         $error = "Invalid username or password!";
     }
 }

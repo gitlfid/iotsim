@@ -277,4 +277,27 @@ function createNotification($userId, $title, $message, $type = 'info') {
     $stmt->bind_param("isss", $userId, $title, $message, $type);
     return $stmt->execute();
 }
+
+// --- CONFIG.PHP ADDITION ---
+
+// Fungsi Cek Akses Menu Dinamis
+function hasAccess($page_key) {
+    global $conn;
+    
+    // Jika user belum login
+    if (!isset($_SESSION['role'])) return false;
+    $role = $_SESSION['role'];
+
+    // Superadmin selalu true (bypass) - Opsional, tapi lebih aman cek DB
+    if ($role == 'superadmin') return true; 
+
+    // Cek Database
+    $stmt = $conn->prepare("SELECT id FROM role_permissions WHERE role = ? AND page_key = ?");
+    $stmt->bind_param("ss", $role, $page_key);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    return ($result->num_rows > 0);
+}
+
 ?>
