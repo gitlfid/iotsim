@@ -88,27 +88,54 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// --- FETCH DATA ---
-// Ambil Companies + Level untuk Dropdown
+// --- FETCH DATA (HIERARCHY LOGIC) ---
+
+// 1. Ambil semua data company
+$raw_companies = [];
+$res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
+while($r = $res->fetch_assoc()) {
+    $raw_companies[$r['id']] = $r;
+    $raw_companies[$r['id']]['children'] = []; // Siapkan slot anak
+}
+
+// 2. Susun Tree Structure
+$tree = [];
+foreach ($raw_companies as $id => &$node) {
+    if ($node['parent_id'] && isset($raw_companies[$node['parent_id']])) {
+        // Jika punya parent, masukkan ke dalam array children parent-nya
+        $raw_companies[$node['parent_id']]['children'][] = &$node;
+    } else {
+        // Jika tidak punya parent (atau parent tidak ketemu), anggap sebagai Root
+        $tree[] = &$node;
+    }
+}
+unset($node); // Bersihkan referensi
+
+// 3. Flatten Tree (Ubah kembali jadi list berurutan untuk loop di HTML)
 $companies = [];
-$res = $conn->query("SELECT id, company_name, level FROM companies ORDER BY level ASC, company_name ASC");
-while($r = $res->fetch_assoc()) $companies[] = $r;
+function flattenTree($branch, &$output, $depth = 0) {
+    foreach ($branch as $node) {
+        $node['depth'] = $depth; // Tambahkan info kedalaman (0=L1, 1=L2, dst)
+        $output[] = $node;
+        if (!empty($node['children'])) {
+            flattenTree($node['children'], $output, $depth + 1);
+        }
+    }
+}
+flattenTree($tree, $companies); 
+// Sekarang $companies sudah urut: Induk -> Anak -> Cucu
 
 // Get Users Data
 $users = [];
 $q = $conn->query("SELECT * FROM users ORDER BY id DESC");
 while($u = $q->fetch_assoc()) {
-    $assigned_details = []; // Array menyimpan nama dan level
+    $assigned_details = [];
     $assigned_ids = [];
     
     if ($u['access_all_companies'] == 0) {
-        // Ambil nama company DAN level
         $uc = $conn->query("SELECT c.id, c.company_name, c.level FROM user_companies uc JOIN companies c ON uc.company_id = c.id WHERE uc.user_id = " . $u['id'] . " ORDER BY c.level ASC");
         while($c = $uc->fetch_assoc()) {
-            $assigned_details[] = [
-                'name' => $c['company_name'],
-                'level' => $c['level']
-            ];
+            $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level']];
             $assigned_ids[] = $c['id'];
         }
     }
@@ -118,7 +145,6 @@ while($u = $q->fetch_assoc()) {
     $users[] = $u;
 }
 
-// Helper untuk warna badge level
 function getLevelBadge($lvl) {
     switch($lvl) {
         case 1: return "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300 dark:border-indigo-800";
@@ -198,7 +224,6 @@ function getLevelBadge($lvl) {
                                         ];
                                         $badge = $roleColors[$user['role']] ?? $roleColors['user'];
                                         
-                                        // --- LOGIC TAMPILAN PERUSAHAAN + LEVEL ---
                                         if ($user['access_all_companies'] == 1) {
                                             $scopeDisplay = '
                                             <div class="flex items-center gap-2 text-amber-600 dark:text-amber-400">
@@ -213,7 +238,6 @@ function getLevelBadge($lvl) {
                                             if ($count == 0) {
                                                 $scopeDisplay = '<span class="text-red-400 italic flex items-center gap-1"><i class="ph ph-warning"></i> Unassigned</span>';
                                             } else {
-                                                // Tampilkan List dengan Badge Level
                                                 $listHTML = '<div class="flex flex-wrap gap-2">';
                                                 foreach($user['assigned_details'] as $comp) {
                                                     $lvlClass = getLevelBadge($comp['level']);
@@ -350,11 +374,17 @@ function getLevelBadge($lvl) {
                                 <div class="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl p-2 bg-slate-50 dark:bg-slate-800/50 grid grid-cols-1 gap-1">
                                     <?php foreach($companies as $c): 
                                         $lvlBadge = getLevelBadge($c['level']);
+                                        // Indentation Logic based on Depth
+                                        $indent = $c['depth'] * 20; // 20px per level
+                                        $connector = ($c['depth'] > 0) ? '<span class="text-slate-300 mr-1">└─</span>' : '';
                                     ?>
                                     <label class="cursor-pointer relative group">
                                         <input type="checkbox" name="company_ids[]" value="<?= $c['id'] ?>" class="comp-check sr-only peer">
-                                        <div class="px-3 py-2.5 rounded-lg border border-transparent text-sm font-medium text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800 transition-all peer-checked:bg-indigo-50 peer-checked:text-indigo-600 peer-checked:border-indigo-200 dark:peer-checked:bg-indigo-900/30 dark:peer-checked:text-indigo-300 dark:peer-checked:border-indigo-800 flex items-center justify-between shadow-sm">
-                                            <span><?= $c['company_name'] ?></span>
+                                        <div class="px-3 py-2.5 rounded-lg border border-transparent text-sm font-medium text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800 transition-all peer-checked:bg-indigo-50 peer-checked:text-indigo-600 peer-checked:border-indigo-200 dark:peer-checked:bg-indigo-900/30 dark:peer-checked:text-indigo-300 dark:peer-checked:border-indigo-800 flex items-center justify-between shadow-sm" style="margin-left: <?= $indent ?>px">
+                                            <div class="flex items-center">
+                                                <?= $connector ?>
+                                                <span><?= $c['company_name'] ?></span>
+                                            </div>
                                             <span class="text-[9px] px-1.5 py-0.5 rounded border font-bold <?= $lvlBadge ?>">Lvl <?= $c['level'] ?></span>
                                             <i class="ph ph-check-circle absolute right-2 opacity-0 peer-checked:opacity-100 text-indigo-600 dark:text-indigo-400 transition-opacity"></i>
                                         </div>
