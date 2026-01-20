@@ -4,34 +4,23 @@ checkLogin();
 
 // --- 0. PREPARATION ---
 $user_id = $_SESSION['user_id'];
-$my_partner_code = ''; 
+$my_partner_code = 'IDN0000034'; // Default value
 $my_company_id = 0;
 
-// --- GET ALLOWED COMPANIES ---
+// --- GET ALLOWED COMPANIES (Multi-Access Logic) ---
+// Menggunakan fungsi helper dari config.php
 $allowed_comps = getClientIdsForUser($user_id);
 $company_condition = "";
 
 if ($allowed_comps === 'NONE') {
-    // User tidak punya akses ke company manapun -> Tampilkan kosong
+    // User tidak punya akses ke company manapun -> Blokir data
     $company_condition = " AND 1=0 "; 
 } elseif (is_array($allowed_comps)) {
-    // User punya akses spesifik
+    // User punya akses ke beberapa company spesifik
     $ids_str = implode(',', $allowed_comps);
     $company_condition = " AND sims.company_id IN ($ids_str) ";
 } 
-// Jika 'ALL', $company_condition tetap kosong (artinya tampilkan semua)
-
-// ...
-
-// Update Query WHERE Utama
-$where = "WHERE 1=1 " . $company_condition; // Tambahkan kondisi company di sini
-
-if ($uComp->num_rows > 0) {
-    $uData = $uComp->fetch_assoc();
-    $my_partner_code = $uData['partner_code']; 
-    $my_company_id = $uData['company_id'];
-}
-if (empty($my_partner_code)) $my_partner_code = 'IDN0000034';
+// Jika 'ALL', $company_condition kosong (tampilkan semua)
 
 // --- 1. HANDLE POST ACTIONS ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -98,9 +87,18 @@ $f_status  = $_GET['status'] ?? '';
 $f_tag     = $_GET['tag'] ?? '';
 $f_level   = $_GET['level'] ?? '';
 
-$where = "WHERE 1=1";
-if ($s_keyword) $where .= " AND (sims.iccid LIKE '%$s_keyword%' OR sims.imsi LIKE '%$s_keyword%' OR sims.msisdn LIKE '%$s_keyword%')";
-if ($f_company) $where .= " AND sims.company_id = '$f_company'";
+// --- APPLY FILTERS TO QUERY ---
+// Masukkan $company_condition (filter user login) di awal
+$where = "WHERE 1=1 " . $company_condition;
+
+if ($s_keyword) {
+    $safeKey = $conn->real_escape_string($s_keyword);
+    $where .= " AND (sims.iccid LIKE '%$safeKey%' OR sims.imsi LIKE '%$safeKey%' OR sims.msisdn LIKE '%$safeKey%')";
+}
+if ($f_company) {
+    $safeComp = $conn->real_escape_string($f_company);
+    $where .= " AND sims.company_id = '$safeComp'";
+}
 if ($f_status)  $where .= " AND sims.status = '$f_status'";
 if ($f_tag)     $where .= " AND sims.tags LIKE '%$f_tag%'";
 if ($f_level)   $where .= " AND companies.level = '$f_level'";
@@ -118,15 +116,26 @@ $sql = "SELECT sims.*, companies.company_name, companies.project_name as default
         ORDER BY sims.id DESC LIMIT $offset, $pageSize";
 $result = $conn->query($sql);
 
-// Helper Data
-$compArr = []; $cQ = $conn->query("SELECT id, company_name FROM companies ORDER BY company_name");
+// Helper Data (Dropdowns)
+// Filter dropdown company agar hanya muncul yang diizinkan user
+$compWhere = "";
+if (is_array($allowed_comps)) {
+    $compWhere = "WHERE id IN (" . implode(',', $allowed_comps) . ")";
+} elseif ($allowed_comps === 'NONE') {
+    $compWhere = "WHERE 1=0";
+}
+
+$compArr = []; 
+$cQ = $conn->query("SELECT id, company_name FROM companies $compWhere ORDER BY company_name");
 while($r = $cQ->fetch_assoc()) $compArr[] = $r;
 
-$projArr = []; $pQ = $conn->query("SELECT DISTINCT IFNULL(custom_project, project_name) as p_name FROM sims LEFT JOIN companies ON sims.company_id = companies.id HAVING p_name IS NOT NULL AND p_name != '' ORDER BY p_name");
+$projArr = []; 
+$pQ = $conn->query("SELECT DISTINCT IFNULL(custom_project, project_name) as p_name FROM sims LEFT JOIN companies ON sims.company_id = companies.id $where HAVING p_name IS NOT NULL AND p_name != '' ORDER BY p_name");
 while($r = $pQ->fetch_assoc()) $projArr[] = $r['p_name'];
 
-// FIX: Added '?? ""' to handle null tags from database
-$tagArr = []; $tQ = $conn->query("SELECT DISTINCT tags FROM sims");
+// Fix explode null
+$tagArr = []; 
+$tQ = $conn->query("SELECT DISTINCT tags FROM sims");
 while($r = $tQ->fetch_assoc()) { 
     foreach(explode(',', $r['tags'] ?? '') as $t) {
         if(trim($t)) $tagArr[] = trim($t); 
@@ -358,9 +367,7 @@ $tagArr = array_unique($tagArr); sort($tagArr);
                                     <td class="col-tags px-4 py-3 align-middle sticky-col w-col-tags bg-sticky-light dark:bg-sticky-dark">
                                         <div class="flex flex-col gap-1 justify-center">
                                             <div class="flex flex-wrap gap-1">
-                                                <?php 
-                                                // FIX: Added null check
-                                                foreach(array_filter(explode(',', $row['tags'] ?? '')) as $tag): ?>
+                                                <?php foreach(array_filter(explode(',', $row['tags'] ?? '')) as $tag): ?>
                                                     <span class="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px] border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300"><?= trim($tag) ?></span>
                                                 <?php endforeach; ?>
                                             </div>
