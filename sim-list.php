@@ -7,10 +7,24 @@ $user_id = $_SESSION['user_id'];
 $my_partner_code = ''; 
 $my_company_id = 0;
 
-$uComp = $conn->query("SELECT c.level, c.partner_code, c.id as company_id 
-                       FROM companies c 
-                       JOIN users u ON c.id = u.company_id 
-                       WHERE u.id = '$user_id'");
+// --- GET ALLOWED COMPANIES ---
+$allowed_comps = getClientIdsForUser($user_id);
+$company_condition = "";
+
+if ($allowed_comps === 'NONE') {
+    // User tidak punya akses ke company manapun -> Tampilkan kosong
+    $company_condition = " AND 1=0 "; 
+} elseif (is_array($allowed_comps)) {
+    // User punya akses spesifik
+    $ids_str = implode(',', $allowed_comps);
+    $company_condition = " AND sims.company_id IN ($ids_str) ";
+} 
+// Jika 'ALL', $company_condition tetap kosong (artinya tampilkan semua)
+
+// ...
+
+// Update Query WHERE Utama
+$where = "WHERE 1=1 " . $company_condition; // Tambahkan kondisi company di sini
 
 if ($uComp->num_rows > 0) {
     $uData = $uComp->fetch_assoc();

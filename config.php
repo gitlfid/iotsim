@@ -300,4 +300,27 @@ function hasAccess($page_key) {
     return ($result->num_rows > 0);
 }
 
+// ... kode config.php sebelumnya ...
+
+// --- FUNGSI CEK AKSES COMPANY USER ---
+function getClientIdsForUser($user_id) {
+    global $conn;
+    
+    // 1. Cek apakah user punya akses "ALL"
+    $u = $conn->query("SELECT access_all_companies, role FROM users WHERE id = '$user_id'")->fetch_assoc();
+    if ($u['access_all_companies'] == 1 || $u['role'] == 'superadmin') {
+        return 'ALL';
+    }
+
+    // 2. Jika tidak, ambil list company dari tabel relasi
+    $ids = [];
+    $q = $conn->query("SELECT company_id FROM user_companies WHERE user_id = '$user_id'");
+    while($row = $q->fetch_assoc()) {
+        $ids[] = $row['company_id'];
+    }
+
+    // 3. Kembalikan Array ID atau 'NONE' jika kosong
+    return !empty($ids) ? $ids : 'NONE';
+}
+
 ?>
