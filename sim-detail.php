@@ -93,20 +93,45 @@ function formatBytes($bytes, $precision = 2) {
     return round($bytes, $precision) . ' ' . $units[$pow]; 
 }
 
+// FIX: Update function time_elapsed_string agar support PHP 8.2+ (Dynamic Property)
 function time_elapsed_string($datetime, $full = false) {
     $now = new DateTime;
     $ago = new DateTime($datetime);
     $diff = $now->diff($ago);
-    $diff->w = floor($diff->d / 7);
-    $diff->d -= $diff->w * 7;
-    $string = array('y' => 'year','m' => 'month','w' => 'week','d' => 'day','h' => 'hour','i' => 'minute','s' => 'second');
+
+    // Hitung minggu dan sisa hari secara manual
+    $weeks = floor($diff->d / 7);
+    $days = $diff->d - ($weeks * 7);
+
+    // Mapping nilai ke array lokal, bukan ke object $diff langsung
+    $time_values = [
+        'y' => $diff->y,
+        'm' => $diff->m,
+        'w' => $weeks,
+        'd' => $days,
+        'h' => $diff->h,
+        'i' => $diff->i,
+        's' => $diff->s
+    ];
+
+    $string = array(
+        'y' => 'year',
+        'm' => 'month',
+        'w' => 'week',
+        'd' => 'day',
+        'h' => 'hour',
+        'i' => 'minute',
+        's' => 'second'
+    );
+
     foreach ($string as $k => &$v) {
-        if ($diff->$k) {
-            $v = $diff->$k . ' ' . $v . ($diff->$k > 1 ? 's' : '');
+        if ($time_values[$k]) {
+            $v = $time_values[$k] . ' ' . $v . ($time_values[$k] > 1 ? 's' : '');
         } else {
             unset($string[$k]);
         }
     }
+
     if (!$full) $string = array_slice($string, 0, 1);
     return $string ? implode(', ', $string) . ' ago' : 'just now';
 }
@@ -662,8 +687,7 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
                     axisTicks: { show: false },
                     labels: {
                         style: { colors: '#64748B', fontSize: '12px' },
-                        rotate: -45 
-                    }
+                        rotate: -45 \n                    }
                 },
                 yaxis: {
                     title: { text: 'Volume (MB)' },
