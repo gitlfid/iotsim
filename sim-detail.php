@@ -93,17 +93,14 @@ function formatBytes($bytes, $precision = 2) {
     return round($bytes, $precision) . ' ' . $units[$pow]; 
 }
 
-// FIX: Update function time_elapsed_string agar support PHP 8.2+ (Dynamic Property)
 function time_elapsed_string($datetime, $full = false) {
     $now = new DateTime;
     $ago = new DateTime($datetime);
     $diff = $now->diff($ago);
 
-    // Hitung minggu dan sisa hari secara manual
     $weeks = floor($diff->d / 7);
     $days = $diff->d - ($weeks * 7);
 
-    // Mapping nilai ke array lokal, bukan ke object $diff langsung
     $time_values = [
         'y' => $diff->y,
         'm' => $diff->m,
@@ -137,7 +134,6 @@ function time_elapsed_string($datetime, $full = false) {
 }
 
 // --- LOGIC STATUS KONEKSI (ONLINE/OFFLINE) ---
-// Mengambil status dari API getSimConStatus (prioritas) atau fallback ke API connection
 $connectionStatusCode = isset($statusData['status']) ? $statusData['status'] : ($connData['status'] ?? '2');
 $connectionBadge = '';
 
@@ -171,7 +167,7 @@ $totalDisplay = formatBytes($totalBytes);
 $usedDisplay = formatBytes($usedBytes);
 $remainingDisplay = formatBytes($remainingBytes);
 
-// Data Koneksi Detail (APN, Lokasi, dll tetap ambil dari $connData)
+// Data Koneksi Detail
 $connApn = $connData['apn'] ?? '-';
 $connLocation = $connData['location'] ?? '-';
 $connFlag = $connData['nationalFlag'] ?? '';
@@ -200,6 +196,11 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
             }
         }
     </script>
+    <style>
+        .scroller::-webkit-scrollbar { width: 6px; }
+        .scroller::-webkit-scrollbar-thumb { background-color: #CBD5E1; border-radius: 3px; }
+        .dark .scroller::-webkit-scrollbar-thumb { background-color: #475569; }
+    </style>
 </head>
 <body class="bg-[#F8FAFC] dark:bg-dark text-slate-600 dark:text-darktext antialiased overflow-hidden">
     <div class="flex h-screen overflow-hidden">
@@ -545,17 +546,16 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
                             <h3 class="text-lg font-bold text-slate-800 dark:text-white">Events Log</h3>
                         </div>
 
-                        <div class="overflow-x-auto rounded-lg border border-slate-100 dark:border-slate-700">
+                        <div class="overflow-x-auto rounded-lg border border-slate-100 dark:border-slate-700 max-h-[350px] overflow-y-auto scroller">
                             <table class="w-full text-left border-collapse">
-                                <thead class="bg-slate-50 dark:bg-slate-700/50">
+                                <thead class="bg-slate-50 dark:bg-slate-700/50 sticky top-0 z-10 shadow-sm">
                                     <tr>
-                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Type</th>
-                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">SubType</th>
-                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Result</th>
-                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
-                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Source</th>
-                                        <!-- <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">User</th> -->
-                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Description</th>
+                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 dark:bg-slate-800">Type</th>
+                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 dark:bg-slate-800">SubType</th>
+                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 dark:bg-slate-800">Result</th>
+                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 dark:bg-slate-800">Date</th>
+                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 dark:bg-slate-800">Source</th>
+                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 dark:bg-slate-800">Description</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
@@ -583,13 +583,12 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
                                             <?= $sourceIcon ?> 
                                             <?= ($ev['source'] == 1) ? 'web v4' : 'API' ?>
                                         </td>
-                                        <!-- <td class="p-4 text-sm text-slate-600 dark:text-slate-300"><?= $ev['userEmail'] ?: '-' ?></td> -->
                                         <td class="p-4 text-sm text-slate-600 dark:text-slate-300 max-w-xs truncate" title="<?= htmlspecialchars($ev['description']) ?>">
                                             <?= htmlspecialchars($ev['description']) ?>
                                         </td>
                                     </tr>
                                     <?php endforeach; else: ?>
-                                    <tr><td colspan="7" class="p-8 text-center text-slate-500">No events found.</td></tr>
+                                    <tr><td colspan="6" class="p-8 text-center text-slate-500">No events found.</td></tr>
                                     <?php endif; ?>
                                 </tbody>
                             </table>
@@ -687,7 +686,8 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
                     axisTicks: { show: false },
                     labels: {
                         style: { colors: '#64748B', fontSize: '12px' },
-                        rotate: -45 \n                    }
+                        rotate: -45 
+                    }
                 },
                 yaxis: {
                     title: { text: 'Volume (MB)' },
