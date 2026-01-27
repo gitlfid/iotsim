@@ -554,7 +554,7 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
                                         <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Result</th>
                                         <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
                                         <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Source</th>
-                                        <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">User</th>
+                                        <!-- <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">User</th> -->
                                         <th class="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Description</th>
                                     </tr>
                                 </thead>
@@ -583,7 +583,7 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
                                             <?= $sourceIcon ?> 
                                             <?= ($ev['source'] == 1) ? 'web v4' : 'API' ?>
                                         </td>
-                                        <td class="p-4 text-sm text-slate-600 dark:text-slate-300"><?= $ev['userEmail'] ?: '-' ?></td>
+                                        <!-- <td class="p-4 text-sm text-slate-600 dark:text-slate-300"><?= $ev['userEmail'] ?: '-' ?></td> -->
                                         <td class="p-4 text-sm text-slate-600 dark:text-slate-300 max-w-xs truncate" title="<?= htmlspecialchars($ev['description']) ?>">
                                             <?= htmlspecialchars($ev['description']) ?>
                                         </td>
