@@ -319,7 +319,7 @@ function generateStrongPassword($length = 10) {
     return substr(str_shuffle($chars), 0, $length);
 }
 
-// --- FUNGSI KIRIM EMAIL (PHPMailer Optimized) ---
+// --- FUNGSI KIRIM EMAIL (PHPMailer Optimized & Fixed) ---
 function sendEmail($to, $subject, $body, $isTest = false) {
     global $conn;
     
@@ -352,9 +352,9 @@ function sendEmail($to, $subject, $body, $isTest = false) {
         $mail->Password   = $smtp['password'];
         $mail->Port       = (int)$smtp['port'];
 
-        // 3. Timeout Settings (PENTING AGAR TIDAK LOADING LAMA)
+        // 3. Timeout Settings (FIXED: Hapus Timelimit yang deprecated)
         $mail->Timeout    = 10; // Timeout koneksi (detik)
-        $mail->Timelimit  = 10; // Batas waktu tunggu respon
+        // $mail->Timelimit = 10; // <-- INI YANG BIKIN ERROR DEPRECATED, SUDAH DIHAPUS
 
         // 4. Pengaturan Enkripsi
         if ($smtp['encryption'] == 'tls') {
@@ -367,7 +367,6 @@ function sendEmail($to, $subject, $body, $isTest = false) {
         }
 
         // 5. Bypass SSL Verification (Solusi Jitu untuk "Connection Failed")
-        // Ini membantu jika server SMTP menggunakan Self-Signed Certificate
         $mail->SMTPOptions = array(
             'ssl' => array(
                 'verify_peer' => false,
