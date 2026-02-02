@@ -307,21 +307,49 @@ function hasAccess($page_key) {
 function getClientIdsForUser($user_id) {
     global $conn;
     
-    // 1. Cek apakah user punya akses "ALL"
+    // 1. Cek apakah user punya akses "ALL" (Superadmin / Global Access)
     $u = $conn->query("SELECT access_all_companies, role FROM users WHERE id = '$user_id'")->fetch_assoc();
     if ($u['access_all_companies'] == 1 || $u['role'] == 'superadmin') {
         return 'ALL';
     }
 
-    // 2. Jika tidak, ambil list company dari tabel relasi
-    $ids = [];
+    // 2. Ambil Company yang di-assign secara EKSPLISIT (Direct Assign)
+    $assigned_ids = [];
     $q = $conn->query("SELECT company_id FROM user_companies WHERE user_id = '$user_id'");
     while($row = $q->fetch_assoc()) {
-        $ids[] = $row['company_id'];
+        $assigned_ids[] = $row['company_id'];
     }
 
-    // 3. Kembalikan Array ID atau 'NONE' jika kosong
-    return !empty($ids) ? $ids : 'NONE';
+    if (empty($assigned_ids)) return 'NONE';
+
+    // 3. LOGIKA HIERARKI: Cari semua Anak, Cucu, Cicit ke bawah
+    // Jika di-assign Level 1, otomatis dapat Level 2, 3, dst.
+    // Jika di-assign Level 2, otomatis dapat Level 3, 4, dst (TAPI TIDAK Level 1).
+    
+    $final_ids = $assigned_ids; // Start dengan yang di-assign langsung
+    $parents_to_check = $assigned_ids; // Batch untuk dicek anaknya
+
+    // Loop sampai tidak ada lagi anak perusahaan ditemukan
+    while (!empty($parents_to_check)) {
+        $check_list = implode(',', $parents_to_check);
+        
+        // Cari perusahaan yang parent_id-nya ada di list batch ini
+        $qChild = $conn->query("SELECT id FROM companies WHERE parent_id IN ($check_list)");
+        
+        $new_children = [];
+        while($row = $qChild->fetch_assoc()) {
+            // Hindari duplikat (jika struktur data melingkar/salah input)
+            if (!in_array($row['id'], $final_ids)) {
+                $final_ids[] = $row['id'];
+                $new_children[] = $row['id'];
+            }
+        }
+        
+        // Set anak-anak yang baru ditemukan sebagai 'Parent' untuk pengecekan level berikutnya (Cucu)
+        $parents_to_check = $new_children;
+    }
+
+    return $final_ids;
 }
 
 ?>

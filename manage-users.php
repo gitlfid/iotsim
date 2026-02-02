@@ -88,34 +88,32 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// --- FETCH DATA (HIERARCHY LOGIC) ---
+// --- FETCH DATA (HIERARCHY LOGIC FOR CHECKBOXES) ---
 
-// 1. Ambil semua data company
+// 1. Ambil data company
 $raw_companies = [];
 $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
 while($r = $res->fetch_assoc()) {
     $raw_companies[$r['id']] = $r;
-    $raw_companies[$r['id']]['children'] = []; // Siapkan slot anak
+    $raw_companies[$r['id']]['children'] = [];
 }
 
-// 2. Susun Tree Structure
+// 2. Susun Tree
 $tree = [];
 foreach ($raw_companies as $id => &$node) {
     if ($node['parent_id'] && isset($raw_companies[$node['parent_id']])) {
-        // Jika punya parent, masukkan ke dalam array children parent-nya
         $raw_companies[$node['parent_id']]['children'][] = &$node;
     } else {
-        // Jika tidak punya parent (atau parent tidak ketemu), anggap sebagai Root
         $tree[] = &$node;
     }
 }
-unset($node); // Bersihkan referensi
+unset($node);
 
-// 3. Flatten Tree (Ubah kembali jadi list berurutan untuk loop di HTML)
+// 3. Flatten Tree (Agar checkbox berurutan L1 -> L2 -> L3)
 $companies = [];
 function flattenTree($branch, &$output, $depth = 0) {
     foreach ($branch as $node) {
-        $node['depth'] = $depth; // Tambahkan info kedalaman (0=L1, 1=L2, dst)
+        $node['depth'] = $depth;
         $output[] = $node;
         if (!empty($node['children'])) {
             flattenTree($node['children'], $output, $depth + 1);
@@ -123,7 +121,6 @@ function flattenTree($branch, &$output, $depth = 0) {
     }
 }
 flattenTree($tree, $companies); 
-// Sekarang $companies sudah urut: Induk -> Anak -> Cucu
 
 // Get Users Data
 $users = [];
@@ -133,6 +130,7 @@ while($u = $q->fetch_assoc()) {
     $assigned_ids = [];
     
     if ($u['access_all_companies'] == 0) {
+        // Tampilkan hanya yang di-assign secara eksplisit
         $uc = $conn->query("SELECT c.id, c.company_name, c.level FROM user_companies uc JOIN companies c ON uc.company_id = c.id WHERE uc.user_id = " . $u['id'] . " ORDER BY c.level ASC");
         while($c = $uc->fetch_assoc()) {
             $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level']];
@@ -189,7 +187,7 @@ function getLevelBadge($lvl) {
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                         <div>
                             <h1 class="text-2xl font-bold text-slate-800 dark:text-white">User Management</h1>
-                            <p class="text-sm text-slate-500 mt-1">Manage system access, roles, and company hierarchy.</p>
+                            <p class="text-sm text-slate-500 mt-1">Manage system access with hierarchical scope (Parent sees Children).</p>
                         </div>
                         <button onclick="openModal('add')" class="bg-primary hover:bg-indigo-600 text-white px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/30 flex items-center gap-2 transition-all active:scale-95 font-medium">
                             <i class="ph ph-user-plus text-lg"></i> Add New User
@@ -209,7 +207,7 @@ function getLevelBadge($lvl) {
                                     <tr>
                                         <th class="px-6 py-4">User Details</th>
                                         <th class="px-6 py-4">Role</th>
-                                        <th class="px-6 py-4 w-[40%]">Assigned Companies</th>
+                                        <th class="px-6 py-4 w-[40%]">Assigned Scope (Direct)</th>
                                         <th class="px-6 py-4 text-center">Status</th>
                                         <th class="px-6 py-4 text-right">Action</th>
                                     </tr>
@@ -230,7 +228,7 @@ function getLevelBadge($lvl) {
                                                 <i class="ph ph-globe-hemisphere-west text-xl"></i>
                                                 <div>
                                                     <span class="block text-xs font-bold uppercase tracking-wide">Global Access</span>
-                                                    <span class="text-[11px] opacity-80">Can view all companies & levels</span>
+                                                    <span class="text-[11px] opacity-80">Full Hierarchy View</span>
                                                 </div>
                                             </div>';
                                         } else {
@@ -241,17 +239,20 @@ function getLevelBadge($lvl) {
                                                 $listHTML = '<div class="flex flex-wrap gap-2">';
                                                 foreach($user['assigned_details'] as $comp) {
                                                     $lvlClass = getLevelBadge($comp['level']);
+                                                    // Indikator bahwa ini Parent
+                                                    $isParentIcon = ($comp['level'] == 1) ? '<i class="ph ph-tree-structure text-[10px] ml-1 opacity-50" title="Includes sub-companies"></i>' : '';
+                                                    
                                                     $listHTML .= '
                                                     <div class="inline-flex items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 shadow-sm">
-                                                        <span class="text-xs font-medium text-slate-700 dark:text-slate-300 mr-2">'.$comp['name'].'</span>
+                                                        <span class="text-xs font-medium text-slate-700 dark:text-slate-300 mr-1">'.$comp['name'].'</span>
                                                         <span class="text-[9px] font-bold px-1.5 py-0.5 rounded border '.$lvlClass.'">Lvl '.$comp['level'].'</span>
+                                                        '.$isParentIcon.'
                                                     </div>';
                                                 }
                                                 $listHTML .= '</div>';
                                                 $scopeDisplay = $listHTML;
                                             }
                                         }
-                                        
                                         $isActive = $user['is_active'];
                                     ?>
                                     <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
@@ -275,21 +276,21 @@ function getLevelBadge($lvl) {
                                             <?= $scopeDisplay ?>
                                         </td>
                                         <td class="px-6 py-4 text-center">
-                                            <label class="relative inline-flex items-center cursor-pointer" title="Toggle Account Status">
+                                            <label class="relative inline-flex items-center cursor-pointer">
                                                 <input type="checkbox" class="sr-only peer" onchange="toggleStatus(<?= $user['id'] ?>, this)" <?= $isActive ? 'checked' : '' ?>>
                                                 <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
                                             </label>
                                         </td>
                                         <td class="px-6 py-4 text-right">
                                             <div class="flex items-center justify-end gap-2">
-                                                <button onclick='openEdit(<?= json_encode($user) ?>)' class="p-2 rounded-lg text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/30 dark:text-slate-400 dark:hover:text-indigo-400 transition-colors border border-transparent hover:border-indigo-100" title="Edit User">
+                                                <button onclick='openEdit(<?= json_encode($user) ?>)' class="p-2 rounded-lg text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/30 dark:text-slate-400 dark:hover:text-indigo-400 transition-colors">
                                                     <i class="ph ph-pencil-simple text-lg"></i>
                                                 </button>
                                                 <?php if($user['id'] != $_SESSION['user_id']): ?>
                                                 <form method="POST" onsubmit="return confirm('Delete this user?');" class="inline-block">
                                                     <input type="hidden" name="action" value="delete">
                                                     <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
-                                                    <button type="submit" class="p-2 rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:text-slate-400 dark:hover:text-red-400 transition-colors border border-transparent hover:border-red-100" title="Delete User">
+                                                    <button type="submit" class="p-2 rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:text-slate-400 dark:hover:text-red-400 transition-colors">
                                                         <i class="ph ph-trash text-lg"></i>
                                                     </button>
                                                 </form>
@@ -310,7 +311,6 @@ function getLevelBadge($lvl) {
 
     <div id="userModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
         <div class="bg-white dark:bg-darkcard w-full max-w-lg rounded-2xl shadow-2xl transform transition-all scale-95 opacity-0 modal-anim flex flex-col max-h-[90vh]">
-            
             <div class="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-darkcard rounded-t-2xl z-10">
                 <div>
                     <h3 id="modalTitle" class="text-xl font-bold text-slate-800 dark:text-white">Add New User</h3>
@@ -331,19 +331,17 @@ function getLevelBadge($lvl) {
                             <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Username</label>
                             <div class="relative">
                                 <i class="ph ph-user absolute left-3.5 top-3 text-slate-400 text-lg"></i>
-                                <input type="text" name="username" id="inputUsername" required class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-primary focus:border-primary outline-none dark:text-white transition-all shadow-sm" placeholder="e.g. john_doe">
+                                <input type="text" name="username" id="inputUsername" required class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-primary focus:border-primary outline-none dark:text-white transition-all shadow-sm">
                             </div>
                         </div>
-
                         <div>
                             <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Password</label>
                             <div class="relative">
                                 <i class="ph ph-lock-key absolute left-3.5 top-3 text-slate-400 text-lg"></i>
-                                <input type="password" name="password" id="inputPassword" class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-primary focus:border-primary outline-none dark:text-white transition-all shadow-sm" placeholder="••••••••">
+                                <input type="password" name="password" id="inputPassword" class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-primary focus:border-primary outline-none dark:text-white transition-all shadow-sm">
                             </div>
                             <p class="text-[10px] text-slate-400 mt-1" id="passHelp">Required for new user.</p>
                         </div>
-
                         <div>
                             <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Role Permissions</label>
                             <div class="relative">
@@ -359,24 +357,30 @@ function getLevelBadge($lvl) {
                         </div>
 
                         <div class="pt-2 border-t border-slate-100 dark:border-slate-800">
-                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-3">Company Access Scope</label>
+                            <div class="flex justify-between items-center mb-3">
+                                <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400">Company Access</label>
+                                <div class="group relative cursor-help">
+                                    <i class="ph ph-info text-slate-400 hover:text-primary"></i>
+                                    <div class="absolute bottom-full right-0 mb-2 hidden w-64 rounded-lg bg-slate-800 p-3 text-xs text-white shadow-xl group-hover:block z-50">
+                                        Checking a Parent Company automatically grants view access to all its Sub-Companies (Children/Grandchildren).
+                                    </div>
+                                </div>
+                            </div>
                             
                             <label class="flex items-center p-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-800/50 cursor-pointer mb-3 transition-colors hover:bg-amber-100 dark:hover:bg-amber-900/20">
                                 <input type="checkbox" name="access_all" id="checkAccessAll" class="w-5 h-5 text-amber-600 rounded focus:ring-amber-500 border-gray-300" onchange="toggleCompanyList(this)">
                                 <div class="ml-3">
-                                    <span class="block text-sm font-bold text-amber-800 dark:text-amber-500">Access All Companies</span>
-                                    <span class="block text-xs text-amber-600/80 dark:text-amber-500/70">View data from ANY company.</span>
+                                    <span class="block text-sm font-bold text-amber-800 dark:text-amber-500">Global Access (All Companies)</span>
+                                    <span class="block text-xs text-amber-600/80 dark:text-amber-500/70">View everything regardless of level.</span>
                                 </div>
                             </label>
 
                             <div id="specificCompanyList" class="transition-all duration-300">
-                                <p class="text-xs text-slate-400 mb-2">Or select specific companies:</p>
                                 <div class="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl p-2 bg-slate-50 dark:bg-slate-800/50 grid grid-cols-1 gap-1">
                                     <?php foreach($companies as $c): 
                                         $lvlBadge = getLevelBadge($c['level']);
-                                        // Indentation Logic based on Depth
-                                        $indent = $c['depth'] * 20; // 20px per level
-                                        $connector = ($c['depth'] > 0) ? '<span class="text-slate-300 mr-1">└─</span>' : '';
+                                        $indent = $c['depth'] * 20; 
+                                        $connector = ($c['depth'] > 0) ? '<span class="text-slate-300 mr-2">└─</span>' : '';
                                     ?>
                                     <label class="cursor-pointer relative group">
                                         <input type="checkbox" name="company_ids[]" value="<?= $c['id'] ?>" class="comp-check sr-only peer">
@@ -385,8 +389,10 @@ function getLevelBadge($lvl) {
                                                 <?= $connector ?>
                                                 <span><?= $c['company_name'] ?></span>
                                             </div>
-                                            <span class="text-[9px] px-1.5 py-0.5 rounded border font-bold <?= $lvlBadge ?>">Lvl <?= $c['level'] ?></span>
-                                            <i class="ph ph-check-circle absolute right-2 opacity-0 peer-checked:opacity-100 text-indigo-600 dark:text-indigo-400 transition-opacity"></i>
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-[9px] px-1.5 py-0.5 rounded border font-bold <?= $lvlBadge ?>">Lvl <?= $c['level'] ?></span>
+                                                <i class="ph ph-check-circle opacity-0 peer-checked:opacity-100 text-indigo-600 dark:text-indigo-400 transition-opacity"></i>
+                                            </div>
                                         </div>
                                     </label>
                                     <?php endforeach; ?>
