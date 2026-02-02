@@ -3,6 +3,11 @@
 date_default_timezone_set('Asia/Jakarta');
 session_start();
 
+require 'vendor/autoload.php'; // Ini kunci agar PHPMailer jalan
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+
 // --- DATABASE CONFIGURATION ---
 $host = 'localhost';
 $user = 'lfid_iotsim';
