@@ -1,8 +1,16 @@
 <?php
 // config.php
+
+// --- LOAD LIBRARY PHPMAILER (VIA COMPOSER) ---
+// Pastikan folder 'vendor' ada di directory yang sama
+require 'vendor/autoload.php';
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\SMTP;
+use PHPMailer\PHPMailer\Exception;
+
 date_default_timezone_set('Asia/Jakarta');
 session_start();
-
 
 // --- DATABASE CONFIGURATION ---
 $host = 'localhost';
@@ -39,10 +47,8 @@ function getDynamicToken() {
 function getPartnerCodeByIccid($iccid) {
     global $conn;
     
-    // Cek jika ICCID kosong
-    if (empty($iccid)) return 'IDN0000034'; // Default fallback
+    if (empty($iccid)) return 'IDN0000034'; 
 
-    // Query join ke companies untuk ambil partner_code
     $stmt = $conn->prepare("
         SELECT c.partner_code 
         FROM sims s
@@ -56,17 +62,15 @@ function getPartnerCodeByIccid($iccid) {
         $stmt->execute();
         $res = $stmt->get_result();
         if ($row = $res->fetch_assoc()) {
-            // Jika ada partner code di DB, pakai itu
             if (!empty($row['partner_code'])) {
                 return $row['partner_code'];
             }
         }
     }
-    
-    return 'IDN0000034'; // Default jika tidak ketemu
+    return 'IDN0000034'; 
 }
 
-// --- HELPER CURL (Agar tidak nulis ulang terus) ---
+// --- HELPER CURL ---
 function callCurl($url) {
     $token = getDynamicToken(); 
     
@@ -96,70 +100,58 @@ function callCurl($url) {
 }
 
 // ==========================================================
-// API FUNCTIONS (UPDATED DYNAMIC PARTNER CODE)
+// API FUNCTIONS
 // ==========================================================
 
-// 1. GET SIM DETAIL
 function getSimDetailFromApi($iccid) {
     $pCode = getPartnerCodeByIccid($iccid);
     $url = "https://www.lfiotsim.net/prod-api/spoon/sim/details?partnerCode=" . $pCode . "&assetId=" . $iccid;
     return callCurl($url);
 }
 
-// 2. GET SIM CONNECTION
 function getSimConnectionFromApi($iccid) {
     $pCode = getPartnerCodeByIccid($iccid);
     $url = "https://www.lfiotsim.net/prod-api/spoon/sim/connection?assetId=" . $iccid . "&partnerCode=" . $pCode;
     return callCurl($url);
 }
 
-// 3. GET SIM CDR
 function getSimCdrFromApi($iccid, $page = 1, $size = 20) {
     $pCode = getPartnerCodeByIccid($iccid);
     $url = "https://www.lfiotsim.net/prod-api/spoon/sim/connectionCdr?pageNum=" . $page . "&pageSize=" . $size . "&assetId=" . $iccid . "&partnerCode=" . $pCode;
     return callCurl($url);
 }
 
-// 4. GET MONTHLY USAGE
 function getSimMonthUsageFromApi($iccid, $from, $to) {
     $pCode = getPartnerCodeByIccid($iccid);
     $url = "https://www.lfiotsim.net/prod-api/spoon/sim/monthUsage?assetId=" . $iccid . "&partnerCode=" . $pCode . "&from=" . $from . "&to=" . $to;
     return callCurl($url);
 }
 
-// 5. GET DAILY USAGE
 function getSimDailyUsageFromApi($iccid, $from, $to) {
     $pCode = getPartnerCodeByIccid($iccid);
     $url = "https://www.lfiotsim.net/prod-api/spoon/sim/dailyUsage?assetId=" . $iccid . "&partnerCode=" . $pCode . "&from=" . $from . "&to=" . $to;
     return callCurl($url);
 }
 
-// 6. GET SIM BUNDLES
 function getSimBundlesFromApi($iccid, $status) {
     $pCode = getPartnerCodeByIccid($iccid);
     $url = "https://www.lfiotsim.net/prod-api/spoon/sim/bundle?assetId=" . $iccid . "&status=" . $status . "&partnerCode=" . $pCode;
     return callCurl($url);
 }
 
-// 7. GET SIM EVENTS
 function getSimEventsFromApi($iccid) {
-    // Event API biasanya tidak butuh partnerCode di URL path-nya, tapi jika butuh bisa ditambahkan
     $url = "https://www.lfiotsim.net/prod-api/spoon/sim/event/" . $iccid;
     return callCurl($url);
 }
 
-// 8. GET SIM STATUS REALTIME
 function getSimStatusRealtime($iccid) {
     $pCode = getPartnerCodeByIccid($iccid);
     $url = "https://www.lfiotsim.net/prod-api/spoon/sim/getSimConStatus?assetId=" . $iccid . "&partnerCode=" . $pCode;
     return callCurl($url);
 }
 
-// 9. GET SIM LIST (POST Request) - Untuk Sync Data
-// Fungsi ini menerima partnerCode langsung dari parameter, jadi tidak perlu lookup ICCID
 function getSimListFromApi($partnerCode, $page = 1, $size = 5) {
     $url = "https://www.lfiotsim.net/prod-api/spoon/sim/list";
-    
     $postData = [
         "source" => null,
         "assetId" => "",
@@ -196,11 +188,9 @@ function getSimListFromApi($partnerCode, $page = 1, $size = 5) {
     return ($httpCode == 200) ? json_decode($response, true) : null;
 }
 
-// 10. TOGGLE SIM SUSPEND/RESTART (POST)
 function toggleSimStatusFromApi($iccid, $orderId, $operationType) {
-    $pCode = getPartnerCodeByIccid($iccid); // Ambil partner code dinamis
+    $pCode = getPartnerCodeByIccid($iccid); 
     $url = "https://www.lfiotsim.net/prod-api/spoon/sim/suspendOrRestart";
-    
     $postData = [
         "partnerCode" => $pCode,
         "assetId"     => $iccid,
@@ -236,7 +226,7 @@ function toggleSimStatusFromApi($iccid, $orderId, $operationType) {
     return ($httpCode == 200) ? json_decode($response, true) : null;
 }
 
-// --- HELPER: STATUS BADGE ---
+// --- HELPER UI ---
 function getStatusBadge($code) {
     switch ($code) {
         case '1': return '<span class="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">Pre-Active</span>';
@@ -248,23 +238,19 @@ function getStatusBadge($code) {
 }
 
 function getRealtimeStatusBadge($code) {
-    return getStatusBadge($code); // Re-use same logic
+    return getStatusBadge($code); 
 }
 
-// --- HELPER: PACKAGE STATUS TOGGLE ---
 function getPackageStatusToggle($iccid, $pkgStatus) {
     $isChecked = ($pkgStatus == '1') ? 'checked' : '';
     $toggleId = 'pkg_toggle_' . $iccid;
     $labelId = 'pkg_label_' . $iccid;
-    
     $statusText = ($pkgStatus == '1') ? 'Active' : 'Suspend';
     $statusColor = ($pkgStatus == '1') ? 'text-emerald-600' : 'text-slate-400';
     
     return '
     <div class="flex items-center justify-center gap-2">
-        <span id="'.$labelId.'" class="text-[11px] font-bold '.$statusColor.' min-w-[45px] text-right transition-colors">
-            '.$statusText.'
-        </span>
+        <span id="'.$labelId.'" class="text-[11px] font-bold '.$statusColor.' min-w-[45px] text-right transition-colors">'.$statusText.'</span>
         <label for="'.$toggleId.'" class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" id="'.$toggleId.'" class="sr-only peer" onchange="togglePackageStatus(\''.$iccid.'\', this)" '.$isChecked.'>
             <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[\'\'] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-emerald-500"></div>
@@ -272,7 +258,6 @@ function getPackageStatusToggle($iccid, $pkgStatus) {
     </div>';
 }
 
-// --- FUNGSI NOTIFIKASI ---
 function createNotification($userId, $title, $message, $type = 'info') {
     global $conn;
     $stmt = $conn->prepare("INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)");
@@ -280,41 +265,28 @@ function createNotification($userId, $title, $message, $type = 'info') {
     return $stmt->execute();
 }
 
-// --- CONFIG.PHP ADDITION ---
-
 // Fungsi Cek Akses Menu Dinamis
 function hasAccess($page_key) {
     global $conn;
-    
-    // Jika user belum login
     if (!isset($_SESSION['role'])) return false;
     $role = $_SESSION['role'];
-
-    // Superadmin selalu true (bypass) - Opsional, tapi lebih aman cek DB
     if ($role == 'superadmin') return true; 
-
-    // Cek Database
+    
     $stmt = $conn->prepare("SELECT id FROM role_permissions WHERE role = ? AND page_key = ?");
     $stmt->bind_param("ss", $role, $page_key);
     $stmt->execute();
     $result = $stmt->get_result();
-    
     return ($result->num_rows > 0);
 }
-
-// ... kode config.php sebelumnya ...
 
 // --- FUNGSI CEK AKSES COMPANY USER ---
 function getClientIdsForUser($user_id) {
     global $conn;
-    
-    // 1. Cek apakah user punya akses "ALL" (Superadmin / Global Access)
     $u = $conn->query("SELECT access_all_companies, role FROM users WHERE id = '$user_id'")->fetch_assoc();
     if ($u['access_all_companies'] == 1 || $u['role'] == 'superadmin') {
         return 'ALL';
     }
 
-    // 2. Ambil Company yang di-assign secara EKSPLISIT (Direct Assign)
     $assigned_ids = [];
     $q = $conn->query("SELECT company_id FROM user_companies WHERE user_id = '$user_id'");
     while($row = $q->fetch_assoc()) {
@@ -323,123 +295,75 @@ function getClientIdsForUser($user_id) {
 
     if (empty($assigned_ids)) return 'NONE';
 
-    // 3. LOGIKA HIERARKI: Cari semua Anak, Cucu, Cicit ke bawah
-    // Jika di-assign Level 1, otomatis dapat Level 2, 3, dst.
-    // Jika di-assign Level 2, otomatis dapat Level 3, 4, dst (TAPI TIDAK Level 1).
-    
-    $final_ids = $assigned_ids; // Start dengan yang di-assign langsung
-    $parents_to_check = $assigned_ids; // Batch untuk dicek anaknya
+    $final_ids = $assigned_ids;
+    $parents_to_check = $assigned_ids;
 
-    // Loop sampai tidak ada lagi anak perusahaan ditemukan
     while (!empty($parents_to_check)) {
         $check_list = implode(',', $parents_to_check);
-        
-        // Cari perusahaan yang parent_id-nya ada di list batch ini
         $qChild = $conn->query("SELECT id FROM companies WHERE parent_id IN ($check_list)");
-        
         $new_children = [];
         while($row = $qChild->fetch_assoc()) {
-            // Hindari duplikat (jika struktur data melingkar/salah input)
             if (!in_array($row['id'], $final_ids)) {
                 $final_ids[] = $row['id'];
                 $new_children[] = $row['id'];
             }
         }
-        
-        // Set anak-anak yang baru ditemukan sebagai 'Parent' untuk pengecekan level berikutnya (Cucu)
         $parents_to_check = $new_children;
     }
-
     return $final_ids;
 }
 
-// --- FUNGSI GENERATE PASSWORD (ANGKA & HURUF) ---
+// --- FUNGSI GENERATE PASSWORD ---
 function generateStrongPassword($length = 10) {
     $chars = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
     return substr(str_shuffle($chars), 0, $length);
 }
 
-// --- FUNGSI KIRIM EMAIL (NATIVE SMTP) ---
+// --- FUNGSI KIRIM EMAIL (PHPMailer Version) ---
 function sendEmail($to, $subject, $body) {
     global $conn;
     
-    // Ambil setting dari DB
+    // Ambil setting SMTP dari DB
     $q = $conn->query("SELECT * FROM smtp_settings LIMIT 1");
-    if ($q->num_rows == 0) return ['status' => false, 'msg' => 'SMTP Settings not found'];
+    if ($q->num_rows == 0) return ['status' => false, 'msg' => 'SMTP Settings not found in DB'];
     $smtp = $q->fetch_assoc();
 
-    // Konfigurasi
-    $host = $smtp['host'];
-    $port = $smtp['port'];
-    $username = $smtp['username'];
-    $password = $smtp['password'];
-    $from = $smtp['from_email'];
-    $fromName = $smtp['from_name'];
+    $mail = new PHPMailer(true);
 
-    // Ini adalah implementasi socket sederhana untuk SMTP tanpa library PHPMailer
-    // Agar script bisa jalan plug-and-play.
     try {
-        if(!$socket = fsockopen($host, $port, $errno, $errstr, 30)) {
-            return ['status' => false, 'msg' => "Could not connect to SMTP host: $errno $errstr"];
-        }
-
-        $response = array();
-        $response[] = fgets($socket, 515);
-
-        fputs($socket, "HELO " . $_SERVER['SERVER_NAME'] . "\r\n");
-        $response[] = fgets($socket, 515);
-
-        if (!empty($smtp['encryption']) && ($smtp['encryption'] == 'tls')) {
-            fputs($socket, "STARTTLS\r\n");
-            fgets($socket, 515);
-            stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
-            fputs($socket, "HELO " . $_SERVER['SERVER_NAME'] . "\r\n");
-            fgets($socket, 515);
-        }
-
-        fputs($socket, "AUTH LOGIN\r\n");
-        fgets($socket, 515);
-
-        fputs($socket, base64_encode($username) . "\r\n");
-        fgets($socket, 515);
-
-        fputs($socket, base64_encode($password) . "\r\n");
-        $authResult = fgets($socket, 515);
+        // Uncomment baris ini untuk debugging di layar jika error berlanjut
+        // $mail->SMTPDebug = 2; 
         
-        if (strpos($authResult, '235') === false) {
-             return ['status' => false, 'msg' => "Authentication Failed. Check SMTP User/Pass."];
-        }
+        $mail->isSMTP();
+        $mail->Host       = $smtp['host'];
+        $mail->SMTPAuth   = true;
+        $mail->Username   = $smtp['username'];
+        $mail->Password   = $smtp['password'];
+        $mail->Port       = $smtp['port'];
 
-        fputs($socket, "MAIL FROM: <$from>\r\n");
-        fgets($socket, 515);
-
-        fputs($socket, "RCPT TO: <$to>\r\n");
-        fgets($socket, 515);
-
-        fputs($socket, "DATA\r\n");
-        fgets($socket, 515);
-
-        $headers  = "MIME-Version: 1.0\r\n";
-        $headers .= "Content-type: text/html; charset=iso-8859-1\r\n";
-        $headers .= "From: $fromName <$from>\r\n";
-        $headers .= "To: <$to>\r\n";
-        $headers .= "Subject: $subject\r\n";
-
-        fputs($socket, "$headers\r\n$body\r\n.\r\n");
-        $result = fgets($socket, 515);
-
-        fputs($socket, "QUIT\r\n");
-        fclose($socket);
-
-        if (strpos($result, '250') !== false) {
-            return ['status' => true, 'msg' => 'Email sent successfully'];
+        // Pengaturan Enkripsi
+        if ($smtp['encryption'] == 'tls') {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        } elseif ($smtp['encryption'] == 'ssl') {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
         } else {
-            return ['status' => false, 'msg' => "Failed to send: $result"];
+            $mail->SMTPAutoTLS = false;
+            $mail->SMTPSecure = false;
         }
 
+        // Recipients
+        $mail->setFrom($smtp['from_email'], $smtp['from_name']);
+        $mail->addAddress($to);
+
+        // Content
+        $mail->isHTML(true);
+        $mail->Subject = $subject;
+        $mail->Body    = $body;
+
+        $mail->send();
+        return ['status' => true, 'msg' => 'Email sent'];
     } catch (Exception $e) {
-        return ['status' => false, 'msg' => $e->getMessage()];
+        return ['status' => false, 'msg' => "Mailer Error: {$mail->ErrorInfo}"];
     }
 }
-
 ?>

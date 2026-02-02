@@ -8,22 +8,20 @@ if ($_SESSION['role'] !== 'superadmin' && $_SESSION['role'] !== 'admin') {
     exit();
 }
 
-$email_status = "";
-
 // --- HANDLE POST REQUESTS ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
     // 1. ADD / EDIT USER
     if (isset($_POST['action']) && ($_POST['action'] == 'add' || $_POST['action'] == 'edit')) {
         $username = $_POST['username'];
-        $email = $_POST['email']; // NEW: Email
+        $email = $_POST['email']; // Field Baru
         $role = $_POST['role'];
         $user_id = isset($_POST['user_id']) ? $_POST['user_id'] : null;
         $access_all = isset($_POST['access_all']) ? 1 : 0;
         $company_ids = ($access_all == 0 && isset($_POST['company_ids'])) ? $_POST['company_ids'] : [];
 
         if ($_POST['action'] == 'add') {
-            // Check Duplicate
+            // Check Duplicate Username/Email
             $check = $conn->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
             $check->bind_param("ss", $username, $email);
             $check->execute();
@@ -31,8 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 header("Location: manage-users.php?msg=Error: Username or Email already exists&type=error"); exit;
             }
 
-            // AUTO GENERATE PASSWORD IF EMPTY
-            // Password hanya angka dan huruf (Alphanumeric)
+            // AUTO GENERATE PASSWORD
+            // Jika kosong, buat password acak. Jika diisi, pakai inputan.
             $plain_password = !empty($_POST['password']) ? $_POST['password'] : generateStrongPassword(8);
             $hashed_password = password_hash($plain_password, PASSWORD_DEFAULT);
             
@@ -42,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             if ($stmt->execute()) {
                 $new_user_id = $stmt->insert_id;
                 
-                // Assign Companies
+                // Assign Company Scope
                 if($access_all == 0 && !empty($company_ids)){
                     $stmt_comp = $conn->prepare("INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)");
                     foreach($company_ids as $cid){
@@ -52,26 +50,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 }
 
                 // --- SEND EMAIL NOTIFICATION ---
-                $subject = "Your New Account - IoT Platform";
+                $subject = "Welcome to IoT Platform - Account Credentials";
                 $body = "
-                <h3>Welcome to IoT Platform</h3>
-                <p>Hello,</p>
-                <p>An account has been created for you.</p>
-                <table style='margin-bottom:20px;'>
-                    <tr><td><strong>Username:</strong></td><td>$username</td></tr>
-                    <tr><td><strong>Email:</strong></td><td>$email</td></tr>
-                    <tr><td><strong>Password:</strong></td><td><strong style='font-size:16px; color:#4F46E5;'>$plain_password</strong></td></tr>
-                    <tr><td><strong>Role:</strong></td><td>$role</td></tr>
-                </table>
-                <p>Please login and change your password immediately.</p>
-                <br>
-                <p>Best Regards,<br>IoT Admin</p>
+                <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'>
+                    <h2 style='color: #4F46E5;'>Welcome, $username!</h2>
+                    <p>Your account has been successfully created. You can now access the IoT Platform dashboard.</p>
+                    
+                    <div style='background-color: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0;'>
+                        <p style='margin: 5px 0;'><strong>Username:</strong> $username</p>
+                        <p style='margin: 5px 0;'><strong>Email:</strong> $email</p>
+                        <p style='margin: 5px 0;'><strong>Password:</strong> <span style='font-family: monospace; background: #e0e7ff; color: #4338ca; padding: 2px 6px; rounded: 4px;'>$plain_password</span></p>
+                        <p style='margin: 5px 0;'><strong>Role:</strong> " . ucfirst($role) . "</p>
+                    </div>
+
+                    <p>Please login and change your password immediately for security reasons.</p>
+                    <hr style='border: 0; border-top: 1px solid #eee; margin: 20px 0;'>
+                    <p style='font-size: 12px; color: #6b7280;'>This is an automated message, please do not reply directly.</p>
+                </div>
                 ";
 
                 $mailRes = sendEmail($email, $subject, $body);
-                $mailMsg = $mailRes['status'] ? "Email sent." : "Email failed: ".$mailRes['msg'];
+                $mailMsg = $mailRes['status'] ? "Email sent." : "Email failed: " . $mailRes['msg'];
 
-                header("Location: manage-users.php?msg=User created. $mailMsg&type=success"); exit;
+                header("Location: manage-users.php?msg=User created successfully. $mailMsg&type=success"); exit;
             }
         } 
         else if ($_POST['action'] == 'edit') {
@@ -87,7 +88,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
 
             $conn->query("DELETE FROM user_companies WHERE user_id = $user_id");
-            
             if($access_all == 0 && !empty($company_ids)){
                 $stmt_comp = $conn->prepare("INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)");
                 foreach($company_ids as $cid){
@@ -99,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
     }
 
-    // 2. TOGGLE SUSPEND
+    // Toggle Suspend
     if (isset($_POST['action']) && $_POST['action'] == 'toggle_status') {
         $uid = $_POST['user_id'];
         $status = $_POST['status']; 
@@ -107,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         echo json_encode(['status'=>'success']); exit;
     }
 
-    // 3. DELETE USER
+    // Delete User
     if (isset($_POST['action']) && $_POST['action'] == 'delete') {
         $uid = $_POST['user_id'];
         if ($uid != $_SESSION['user_id']) {
@@ -118,14 +118,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// --- FETCH DATA ---
+// Fetch Data Logic (Hierarchy)
 $raw_companies = [];
 $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
 while($r = $res->fetch_assoc()) {
     $raw_companies[$r['id']] = $r;
     $raw_companies[$r['id']]['children'] = [];
 }
-
 $tree = [];
 foreach ($raw_companies as $id => &$node) {
     if ($node['parent_id'] && isset($raw_companies[$node['parent_id']])) {
@@ -135,32 +134,25 @@ foreach ($raw_companies as $id => &$node) {
     }
 }
 unset($node);
-
 $companies = [];
 function flattenTree($branch, &$output, $depth = 0) {
     foreach ($branch as $node) {
         $node['depth'] = $depth;
         $output[] = $node;
-        if (!empty($node['children'])) {
-            flattenTree($node['children'], $output, $depth + 1);
-        }
+        if (!empty($node['children'])) flattenTree($node['children'], $output, $depth + 1);
     }
 }
 flattenTree($tree, $companies); 
 
-// Get Users Data
+// Get Users
 $users = [];
 $q = $conn->query("SELECT * FROM users ORDER BY id DESC");
 while($u = $q->fetch_assoc()) {
     $assigned_details = [];
-    
     if ($u['access_all_companies'] == 0) {
         $uc = $conn->query("SELECT c.id, c.company_name, c.level FROM user_companies uc JOIN companies c ON uc.company_id = c.id WHERE uc.user_id = " . $u['id'] . " ORDER BY c.level ASC");
-        while($c = $uc->fetch_assoc()) {
-            $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level'], 'id' => $c['id']];
-        }
+        while($c = $uc->fetch_assoc()) $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level'], 'id' => $c['id']];
     }
-    
     $u['assigned_details'] = $assigned_details;
     $users[] = $u;
 }
@@ -365,7 +357,7 @@ function getLevelBadge($lvl) {
                         </div>
 
                         <div>
-                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Email Address (For Credentials)</label>
+                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Email Address</label>
                             <input type="email" name="email" id="inputEmail" required class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-primary outline-none">
                         </div>
 
@@ -373,7 +365,7 @@ function getLevelBadge($lvl) {
                             <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Password</label>
                             <input type="password" name="password" id="inputPassword" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-primary outline-none" placeholder="Auto-generated if empty">
                             <p class="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
-                                <i class="ph ph-info"></i> Leave empty to generate secure alphanumeric password automatically.
+                                <i class="ph ph-info"></i> Leave empty to generate secure password automatically.
                             </p>
                         </div>
 
