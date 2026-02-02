@@ -122,6 +122,15 @@ if (!function_exists('hasAccess')) {
                     </li>
                     <?php endif; ?>
 
+                    <?php if(hasAccess('manage_role')): ?> <li>
+                        <a href="manage-smtp.php" 
+                        class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'manage-smtp.php') ? $active_link_style : $inactive_link_style; ?>">
+                            <i class="<?php echo getIconClass('manage-smtp.php', $current_page, 'ph-envelope-simple'); ?>"></i>
+                            <span class="group-[.is-collapsed]:hidden whitespace-nowrap">SMTP Settings</span>
+                        </a>
+                    </li>
+                    <?php endif; ?>
+
                 </ul>
             </div>
 

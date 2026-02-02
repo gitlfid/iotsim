@@ -8,32 +8,41 @@ if ($_SESSION['role'] !== 'superadmin' && $_SESSION['role'] !== 'admin') {
     exit();
 }
 
+$email_status = "";
+
 // --- HANDLE POST REQUESTS ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
     // 1. ADD / EDIT USER
     if (isset($_POST['action']) && ($_POST['action'] == 'add' || $_POST['action'] == 'edit')) {
         $username = $_POST['username'];
+        $email = $_POST['email']; // NEW: Email
         $role = $_POST['role'];
         $user_id = isset($_POST['user_id']) ? $_POST['user_id'] : null;
         $access_all = isset($_POST['access_all']) ? 1 : 0;
         $company_ids = ($access_all == 0 && isset($_POST['company_ids'])) ? $_POST['company_ids'] : [];
 
         if ($_POST['action'] == 'add') {
-            $check = $conn->prepare("SELECT id FROM users WHERE username = ?");
-            $check->bind_param("s", $username);
+            // Check Duplicate
+            $check = $conn->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
+            $check->bind_param("ss", $username, $email);
             $check->execute();
             if ($check->get_result()->num_rows > 0) {
-                header("Location: manage-users.php?msg=Error: Username exists"); exit;
+                header("Location: manage-users.php?msg=Error: Username or Email already exists&type=error"); exit;
             }
 
-            $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+            // AUTO GENERATE PASSWORD IF EMPTY
+            // Password hanya angka dan huruf (Alphanumeric)
+            $plain_password = !empty($_POST['password']) ? $_POST['password'] : generateStrongPassword(8);
+            $hashed_password = password_hash($plain_password, PASSWORD_DEFAULT);
             
-            $stmt = $conn->prepare("INSERT INTO users (username, password, role, is_active, access_all_companies) VALUES (?, ?, ?, 1, ?)");
-            $stmt->bind_param("sssi", $username, $password, $role, $access_all);
+            $stmt = $conn->prepare("INSERT INTO users (username, email, password, role, is_active, access_all_companies) VALUES (?, ?, ?, ?, 1, ?)");
+            $stmt->bind_param("ssssi", $username, $email, $hashed_password, $role, $access_all);
             
             if ($stmt->execute()) {
                 $new_user_id = $stmt->insert_id;
+                
+                // Assign Companies
                 if($access_all == 0 && !empty($company_ids)){
                     $stmt_comp = $conn->prepare("INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)");
                     foreach($company_ids as $cid){
@@ -41,12 +50,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         $stmt_comp->execute();
                     }
                 }
-                header("Location: manage-users.php?msg=User created successfully"); exit;
+
+                // --- SEND EMAIL NOTIFICATION ---
+                $subject = "Your New Account - IoT Platform";
+                $body = "
+                <h3>Welcome to IoT Platform</h3>
+                <p>Hello,</p>
+                <p>An account has been created for you.</p>
+                <table style='margin-bottom:20px;'>
+                    <tr><td><strong>Username:</strong></td><td>$username</td></tr>
+                    <tr><td><strong>Email:</strong></td><td>$email</td></tr>
+                    <tr><td><strong>Password:</strong></td><td><strong style='font-size:16px; color:#4F46E5;'>$plain_password</strong></td></tr>
+                    <tr><td><strong>Role:</strong></td><td>$role</td></tr>
+                </table>
+                <p>Please login and change your password immediately.</p>
+                <br>
+                <p>Best Regards,<br>IoT Admin</p>
+                ";
+
+                $mailRes = sendEmail($email, $subject, $body);
+                $mailMsg = $mailRes['status'] ? "Email sent." : "Email failed: ".$mailRes['msg'];
+
+                header("Location: manage-users.php?msg=User created. $mailMsg&type=success"); exit;
             }
         } 
         else if ($_POST['action'] == 'edit') {
-            $stmt = $conn->prepare("UPDATE users SET username=?, role=?, access_all_companies=? WHERE id=?");
-            $stmt->bind_param("ssii", $username, $role, $access_all, $user_id);
+            $stmt = $conn->prepare("UPDATE users SET username=?, email=?, role=?, access_all_companies=? WHERE id=?");
+            $stmt->bind_param("sssii", $username, $email, $role, $access_all, $user_id);
             $stmt->execute();
 
             if (!empty($_POST['password'])) {
@@ -65,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $stmt_comp->execute();
                 }
             }
-            header("Location: manage-users.php?msg=User updated successfully"); exit;
+            header("Location: manage-users.php?msg=User updated successfully&type=success"); exit;
         }
     }
 
@@ -84,13 +114,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $conn->query("DELETE FROM users WHERE id = $uid");
             $conn->query("DELETE FROM user_companies WHERE user_id = $uid");
         }
-        header("Location: manage-users.php?msg=User deleted successfully"); exit;
+        header("Location: manage-users.php?msg=User deleted successfully&type=success"); exit;
     }
 }
 
-// --- FETCH DATA (HIERARCHY LOGIC FOR CHECKBOXES) ---
-
-// 1. Ambil data company
+// --- FETCH DATA ---
 $raw_companies = [];
 $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
 while($r = $res->fetch_assoc()) {
@@ -98,7 +126,6 @@ while($r = $res->fetch_assoc()) {
     $raw_companies[$r['id']]['children'] = [];
 }
 
-// 2. Susun Tree
 $tree = [];
 foreach ($raw_companies as $id => &$node) {
     if ($node['parent_id'] && isset($raw_companies[$node['parent_id']])) {
@@ -109,7 +136,6 @@ foreach ($raw_companies as $id => &$node) {
 }
 unset($node);
 
-// 3. Flatten Tree (Agar checkbox berurutan L1 -> L2 -> L3)
 $companies = [];
 function flattenTree($branch, &$output, $depth = 0) {
     foreach ($branch as $node) {
@@ -127,19 +153,15 @@ $users = [];
 $q = $conn->query("SELECT * FROM users ORDER BY id DESC");
 while($u = $q->fetch_assoc()) {
     $assigned_details = [];
-    $assigned_ids = [];
     
     if ($u['access_all_companies'] == 0) {
-        // Tampilkan hanya yang di-assign secara eksplisit
         $uc = $conn->query("SELECT c.id, c.company_name, c.level FROM user_companies uc JOIN companies c ON uc.company_id = c.id WHERE uc.user_id = " . $u['id'] . " ORDER BY c.level ASC");
         while($c = $uc->fetch_assoc()) {
-            $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level']];
-            $assigned_ids[] = $c['id'];
+            $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level'], 'id' => $c['id']];
         }
     }
     
     $u['assigned_details'] = $assigned_details;
-    $u['assigned_ids'] = $assigned_ids;
     $users[] = $u;
 }
 
@@ -187,16 +209,17 @@ function getLevelBadge($lvl) {
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                         <div>
                             <h1 class="text-2xl font-bold text-slate-800 dark:text-white">User Management</h1>
-                            <p class="text-sm text-slate-500 mt-1">Manage system access with hierarchical scope (Parent sees Children).</p>
+                            <p class="text-sm text-slate-500 mt-1">Manage users, access control, and auto-email distribution.</p>
                         </div>
                         <button onclick="openModal('add')" class="bg-primary hover:bg-indigo-600 text-white px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/30 flex items-center gap-2 transition-all active:scale-95 font-medium">
                             <i class="ph ph-user-plus text-lg"></i> Add New User
                         </button>
                     </div>
 
-                    <?php if(isset($_GET['msg'])): ?>
-                        <div class="mb-6 p-4 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-xl border border-green-200 dark:border-green-800 flex items-center gap-2 animate-pulse">
-                            <i class="ph ph-check-circle text-xl"></i> <?= htmlspecialchars($_GET['msg']) ?>
+                    <?php if(isset($_GET['msg'])): $isError = (isset($_GET['type']) && $_GET['type']=='error'); ?>
+                        <div class="mb-6 p-4 rounded-xl border flex items-center gap-2 <?= $isError ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-700 border-green-200' ?>">
+                            <i class="ph <?= $isError ? 'ph-warning' : 'ph-check-circle' ?> text-xl"></i> 
+                            <?= htmlspecialchars($_GET['msg']) ?>
                         </div>
                     <?php endif; ?>
 
@@ -207,7 +230,7 @@ function getLevelBadge($lvl) {
                                     <tr>
                                         <th class="px-6 py-4">User Details</th>
                                         <th class="px-6 py-4">Role</th>
-                                        <th class="px-6 py-4 w-[40%]">Assigned Scope (Direct)</th>
+                                        <th class="px-6 py-4 w-[40%]">Assigned Scope</th>
                                         <th class="px-6 py-4 text-center">Status</th>
                                         <th class="px-6 py-4 text-right">Action</th>
                                     </tr>
@@ -239,14 +262,10 @@ function getLevelBadge($lvl) {
                                                 $listHTML = '<div class="flex flex-wrap gap-2">';
                                                 foreach($user['assigned_details'] as $comp) {
                                                     $lvlClass = getLevelBadge($comp['level']);
-                                                    // Indikator bahwa ini Parent
-                                                    $isParentIcon = ($comp['level'] == 1) ? '<i class="ph ph-tree-structure text-[10px] ml-1 opacity-50" title="Includes sub-companies"></i>' : '';
-                                                    
                                                     $listHTML .= '
                                                     <div class="inline-flex items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 shadow-sm">
                                                         <span class="text-xs font-medium text-slate-700 dark:text-slate-300 mr-1">'.$comp['name'].'</span>
                                                         <span class="text-[9px] font-bold px-1.5 py-0.5 rounded border '.$lvlClass.'">Lvl '.$comp['level'].'</span>
-                                                        '.$isParentIcon.'
                                                     </div>';
                                                 }
                                                 $listHTML .= '</div>';
@@ -263,7 +282,7 @@ function getLevelBadge($lvl) {
                                                 </div>
                                                 <div>
                                                     <p class="font-bold text-slate-800 dark:text-white"><?= $user['username'] ?></p>
-                                                    <p class="text-[10px] text-slate-400">ID: #<?= str_pad($user['id'], 4, '0', STR_PAD_LEFT) ?></p>
+                                                    <p class="text-xs text-slate-400"><?= $user['email'] ?? '-' ?></p>
                                                 </div>
                                             </div>
                                         </td>
@@ -311,10 +330,11 @@ function getLevelBadge($lvl) {
 
     <div id="userModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
         <div class="bg-white dark:bg-darkcard w-full max-w-lg rounded-2xl shadow-2xl transform transition-all scale-95 opacity-0 modal-anim flex flex-col max-h-[90vh]">
+            
             <div class="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-darkcard rounded-t-2xl z-10">
                 <div>
                     <h3 id="modalTitle" class="text-xl font-bold text-slate-800 dark:text-white">Add New User</h3>
-                    <p class="text-xs text-slate-500 mt-0.5">Configure access and permissions.</p>
+                    <p class="text-xs text-slate-500 mt-0.5">Credentials will be emailed automatically.</p>
                 </div>
                 <button onclick="closeModal()" class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 dark:bg-slate-800 dark:hover:bg-slate-700 transition-colors">
                     <i class="ph ph-x text-lg"></i>
@@ -327,51 +347,44 @@ function getLevelBadge($lvl) {
                     <input type="hidden" name="user_id" id="userId">
 
                     <div class="space-y-5">
-                        <div>
-                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Username</label>
-                            <div class="relative">
-                                <i class="ph ph-user absolute left-3.5 top-3 text-slate-400 text-lg"></i>
-                                <input type="text" name="username" id="inputUsername" required class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-primary focus:border-primary outline-none dark:text-white transition-all shadow-sm">
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Username</label>
+                                <input type="text" name="username" id="inputUsername" required class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-primary focus:border-primary outline-none">
                             </div>
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Password</label>
-                            <div class="relative">
-                                <i class="ph ph-lock-key absolute left-3.5 top-3 text-slate-400 text-lg"></i>
-                                <input type="password" name="password" id="inputPassword" class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-primary focus:border-primary outline-none dark:text-white transition-all shadow-sm">
-                            </div>
-                            <p class="text-[10px] text-slate-400 mt-1" id="passHelp">Required for new user.</p>
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Role Permissions</label>
-                            <div class="relative">
-                                <i class="ph ph-shield-check absolute left-3.5 top-3 text-slate-400 text-lg"></i>
-                                <select name="role" id="inputRole" class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-primary focus:border-primary outline-none dark:text-white cursor-pointer shadow-sm appearance-none">
-                                    <option value="user">User (Viewer Only)</option>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Role</label>
+                                <select name="role" id="inputRole" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-primary outline-none">
+                                    <option value="user">User</option>
                                     <option value="sub-admin">Sub-Admin</option>
                                     <option value="admin">Admin</option>
                                     <option value="superadmin">Superadmin</option>
                                 </select>
-                                <i class="ph ph-caret-down absolute right-4 top-3.5 text-slate-400 pointer-events-none"></i>
                             </div>
                         </div>
 
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Email Address (For Credentials)</label>
+                            <input type="email" name="email" id="inputEmail" required class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-primary outline-none">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Password</label>
+                            <input type="password" name="password" id="inputPassword" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-primary outline-none" placeholder="Auto-generated if empty">
+                            <p class="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                                <i class="ph ph-info"></i> Leave empty to generate secure alphanumeric password automatically.
+                            </p>
+                        </div>
+
                         <div class="pt-2 border-t border-slate-100 dark:border-slate-800">
-                            <div class="flex justify-between items-center mb-3">
-                                <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400">Company Access</label>
-                                <div class="group relative cursor-help">
-                                    <i class="ph ph-info text-slate-400 hover:text-primary"></i>
-                                    <div class="absolute bottom-full right-0 mb-2 hidden w-64 rounded-lg bg-slate-800 p-3 text-xs text-white shadow-xl group-hover:block z-50">
-                                        Checking a Parent Company automatically grants view access to all its Sub-Companies (Children/Grandchildren).
-                                    </div>
-                                </div>
-                            </div>
+                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-3">Company Access</label>
                             
                             <label class="flex items-center p-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-800/50 cursor-pointer mb-3 transition-colors hover:bg-amber-100 dark:hover:bg-amber-900/20">
                                 <input type="checkbox" name="access_all" id="checkAccessAll" class="w-5 h-5 text-amber-600 rounded focus:ring-amber-500 border-gray-300" onchange="toggleCompanyList(this)">
                                 <div class="ml-3">
                                     <span class="block text-sm font-bold text-amber-800 dark:text-amber-500">Global Access (All Companies)</span>
-                                    <span class="block text-xs text-amber-600/80 dark:text-amber-500/70">View everything regardless of level.</span>
+                                    <span class="block text-xs text-amber-600/80 dark:text-amber-500/70">User sees all hierarchy.</span>
                                 </div>
                             </label>
 
@@ -403,7 +416,7 @@ function getLevelBadge($lvl) {
 
                     <div class="mt-8 flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
                         <button type="button" onclick="closeModal()" class="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">Cancel</button>
-                        <button type="submit" class="px-6 py-2.5 rounded-xl bg-primary hover:bg-indigo-600 text-white font-bold shadow-lg shadow-indigo-500/30 transition-all active:scale-95">Save User</button>
+                        <button type="submit" class="px-6 py-2.5 rounded-xl bg-primary hover:bg-indigo-600 text-white font-bold shadow-lg shadow-indigo-500/30 transition-all active:scale-95">Save & Send Email</button>
                     </div>
                 </form>
             </div>
@@ -436,8 +449,7 @@ function getLevelBadge($lvl) {
                 document.getElementById('formAction').value = 'add';
                 document.getElementById('userForm').reset();
                 document.getElementById('userId').value = '';
-                document.getElementById('inputPassword').required = true;
-                document.getElementById('passHelp').innerText = 'Required for new user.';
+                document.getElementById('inputPassword').required = false;
                 
                 checkAll.checked = false;
                 toggleCompanyList(checkAll);
@@ -451,17 +463,17 @@ function getLevelBadge($lvl) {
             document.getElementById('formAction').value = 'edit';
             document.getElementById('userId').value = user.id;
             document.getElementById('inputUsername').value = user.username;
+            document.getElementById('inputEmail').value = user.email || '';
             document.getElementById('inputRole').value = user.role;
             document.getElementById('inputPassword').required = false;
-            document.getElementById('passHelp').innerText = 'Leave blank to keep current password.';
 
             checkAll.checked = (user.access_all_companies == 1);
             toggleCompanyList(checkAll);
 
             document.querySelectorAll('.comp-check').forEach(cb => cb.checked = false);
-            if(user.assigned_ids && user.assigned_ids.length > 0) {
-                user.assigned_ids.forEach(id => {
-                    const cb = document.querySelector(`.comp-check[value="${id}"]`);
+            if(user.assigned_details && user.assigned_details.length > 0) {
+                user.assigned_details.forEach(item => {
+                    const cb = document.querySelector(`.comp-check[value="${item.id}"]`);
                     if(cb) cb.checked = true;
                 });
             }

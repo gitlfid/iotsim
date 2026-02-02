@@ -352,4 +352,93 @@ function getClientIdsForUser($user_id) {
     return $final_ids;
 }
 
+// --- FUNGSI GENERATE PASSWORD (ANGKA & HURUF) ---
+function generateStrongPassword($length = 10) {
+    $chars = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    return substr(str_shuffle($chars), 0, $length);
+}
+
+// --- FUNGSI KIRIM EMAIL (NATIVE SMTP) ---
+function sendEmail($to, $subject, $body) {
+    global $conn;
+    
+    // Ambil setting dari DB
+    $q = $conn->query("SELECT * FROM smtp_settings LIMIT 1");
+    if ($q->num_rows == 0) return ['status' => false, 'msg' => 'SMTP Settings not found'];
+    $smtp = $q->fetch_assoc();
+
+    // Konfigurasi
+    $host = $smtp['host'];
+    $port = $smtp['port'];
+    $username = $smtp['username'];
+    $password = $smtp['password'];
+    $from = $smtp['from_email'];
+    $fromName = $smtp['from_name'];
+
+    // Ini adalah implementasi socket sederhana untuk SMTP tanpa library PHPMailer
+    // Agar script bisa jalan plug-and-play.
+    try {
+        if(!$socket = fsockopen($host, $port, $errno, $errstr, 30)) {
+            return ['status' => false, 'msg' => "Could not connect to SMTP host: $errno $errstr"];
+        }
+
+        $response = array();
+        $response[] = fgets($socket, 515);
+
+        fputs($socket, "HELO " . $_SERVER['SERVER_NAME'] . "\r\n");
+        $response[] = fgets($socket, 515);
+
+        if (!empty($smtp['encryption']) && ($smtp['encryption'] == 'tls')) {
+            fputs($socket, "STARTTLS\r\n");
+            fgets($socket, 515);
+            stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+            fputs($socket, "HELO " . $_SERVER['SERVER_NAME'] . "\r\n");
+            fgets($socket, 515);
+        }
+
+        fputs($socket, "AUTH LOGIN\r\n");
+        fgets($socket, 515);
+
+        fputs($socket, base64_encode($username) . "\r\n");
+        fgets($socket, 515);
+
+        fputs($socket, base64_encode($password) . "\r\n");
+        $authResult = fgets($socket, 515);
+        
+        if (strpos($authResult, '235') === false) {
+             return ['status' => false, 'msg' => "Authentication Failed. Check SMTP User/Pass."];
+        }
+
+        fputs($socket, "MAIL FROM: <$from>\r\n");
+        fgets($socket, 515);
+
+        fputs($socket, "RCPT TO: <$to>\r\n");
+        fgets($socket, 515);
+
+        fputs($socket, "DATA\r\n");
+        fgets($socket, 515);
+
+        $headers  = "MIME-Version: 1.0\r\n";
+        $headers .= "Content-type: text/html; charset=iso-8859-1\r\n";
+        $headers .= "From: $fromName <$from>\r\n";
+        $headers .= "To: <$to>\r\n";
+        $headers .= "Subject: $subject\r\n";
+
+        fputs($socket, "$headers\r\n$body\r\n.\r\n");
+        $result = fgets($socket, 515);
+
+        fputs($socket, "QUIT\r\n");
+        fclose($socket);
+
+        if (strpos($result, '250') !== false) {
+            return ['status' => true, 'msg' => 'Email sent successfully'];
+        } else {
+            return ['status' => false, 'msg' => "Failed to send: $result"];
+        }
+
+    } catch (Exception $e) {
+        return ['status' => false, 'msg' => $e->getMessage()];
+    }
+}
+
 ?>
