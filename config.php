@@ -319,8 +319,8 @@ function generateStrongPassword($length = 10) {
     return substr(str_shuffle($chars), 0, $length);
 }
 
-// --- FUNGSI KIRIM EMAIL (PHPMailer Version) ---
-function sendEmail($to, $subject, $body) {
+// --- FUNGSI KIRIM EMAIL (PHPMailer Optimized) ---
+function sendEmail($to, $subject, $body, $isTest = false) {
     global $conn;
     
     // Ambil setting SMTP dari DB
@@ -330,18 +330,33 @@ function sendEmail($to, $subject, $body) {
 
     $mail = new PHPMailer(true);
 
+    // Variabel untuk menampung debug log
+    $debugOutput = '';
+
     try {
-        // Uncomment baris ini untuk debugging di layar jika error berlanjut
-        // $mail->SMTPDebug = 2; 
+        // 1. Setup Debugging (Hanya jika ini Test Email)
+        if ($isTest) {
+            $mail->SMTPDebug = SMTP::DEBUG_CONNECTION; // Level 3 memberikan detail koneksi
+            $mail->Debugoutput = function($str, $level) use (&$debugOutput) {
+                $debugOutput .= "$str\n";
+            };
+        } else {
+            $mail->SMTPDebug = 0; // Matikan debug untuk user biasa
+        }
         
+        // 2. Konfigurasi Server
         $mail->isSMTP();
         $mail->Host       = $smtp['host'];
         $mail->SMTPAuth   = true;
         $mail->Username   = $smtp['username'];
         $mail->Password   = $smtp['password'];
-        $mail->Port       = $smtp['port'];
+        $mail->Port       = (int)$smtp['port'];
 
-        // Pengaturan Enkripsi
+        // 3. Timeout Settings (PENTING AGAR TIDAK LOADING LAMA)
+        $mail->Timeout    = 10; // Timeout koneksi (detik)
+        $mail->Timelimit  = 10; // Batas waktu tunggu respon
+
+        // 4. Pengaturan Enkripsi
         if ($smtp['encryption'] == 'tls') {
             $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         } elseif ($smtp['encryption'] == 'ssl') {
@@ -351,19 +366,34 @@ function sendEmail($to, $subject, $body) {
             $mail->SMTPSecure = false;
         }
 
-        // Recipients
+        // 5. Bypass SSL Verification (Solusi Jitu untuk "Connection Failed")
+        // Ini membantu jika server SMTP menggunakan Self-Signed Certificate
+        $mail->SMTPOptions = array(
+            'ssl' => array(
+                'verify_peer' => false,
+                'verify_peer_name' => false,
+                'allow_self_signed' => true
+            )
+        );
+
+        // 6. Penerima & Konten
         $mail->setFrom($smtp['from_email'], $smtp['from_name']);
         $mail->addAddress($to);
 
-        // Content
         $mail->isHTML(true);
         $mail->Subject = $subject;
         $mail->Body    = $body;
 
         $mail->send();
-        return ['status' => true, 'msg' => 'Email sent'];
+        return ['status' => true, 'msg' => 'Email sent successfully', 'log' => $debugOutput];
+
     } catch (Exception $e) {
-        return ['status' => false, 'msg' => "Mailer Error: {$mail->ErrorInfo}"];
+        // Kembalikan error beserta log debugnya
+        return [
+            'status' => false, 
+            'msg' => "Mailer Error: " . $mail->ErrorInfo,
+            'log' => $debugOutput
+        ];
     }
 }
 ?>
