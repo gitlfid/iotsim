@@ -1,21 +1,24 @@
 <?php
 include 'config.php';
 
-// Jika sudah login, langsung ke dashboard
+// Jika sudah login, cek status reset
 if (isset($_SESSION['user_id'])) {
-    header("Location: dashboard.php");
+    if (isset($_SESSION['force_reset']) && $_SESSION['force_reset'] == 1) {
+        header("Location: reset-password.php");
+    } else {
+        header("Location: dashboard.php");
+    }
     exit();
 }
 
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $username = $_POST['email']; // Di form input namenya 'email' tapi isinya username
+    $username = $_POST['email']; 
     $password = $_POST['password'];
 
-    // 1. Ambil data user berdasarkan username saja dulu
-    // Kita perlu mengambil kolom 'password' juga dari database untuk diverifikasi
-    $stmt = $conn->prepare("SELECT id, username, password, role, company_id FROM users WHERE username = ?");
+    // Ambil force_reset juga dari database
+    $stmt = $conn->prepare("SELECT id, username, password, role, company_id, force_reset FROM users WHERE username = ?");
     $stmt->bind_param("s", $username);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -23,23 +26,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if ($result->num_rows > 0) {
         $row = $result->fetch_assoc();
         
-        // 2. Verifikasi Password Hash
-        // password_verify akan mengecek apakah $password cocok dengan hash di database ($row['password'])
         if (password_verify($password, $row['password'])) {
-            // Password Cocok -> Set Session
+            // Set Session
             $_SESSION['user_id'] = $row['id'];
             $_SESSION['username'] = $row['username'];
             $_SESSION['role'] = $row['role'];
             $_SESSION['company_id'] = $row['company_id'];
+            $_SESSION['force_reset'] = $row['force_reset']; // SIMPAN STATUS RESET
 
-            header("Location: dashboard.php");
+            // Cek Arah Redirect
+            if ($row['force_reset'] == 1) {
+                header("Location: reset-password.php");
+            } else {
+                header("Location: dashboard.php");
+            }
             exit();
         } else {
-            // Password Salah
             $error = "Invalid username or password!";
         }
     } else {
-        // Username tidak ditemukan
         $error = "Invalid username or password!";
     }
 }

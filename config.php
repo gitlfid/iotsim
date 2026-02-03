@@ -25,9 +25,20 @@ if ($conn->connect_error) {
 
 // --- SECURITY ---
 function checkLogin() {
+    // 1. Cek apakah sudah login
     if (!isset($_SESSION['user_id'])) {
         header("Location: login.php");
         exit();
+    }
+
+    // 2. Cek apakah WAJIB GANTI PASSWORD (Force Reset)
+    // Jika flag force_reset = 1 DAN user tidak sedang di halaman reset-password.php
+    if (isset($_SESSION['force_reset']) && $_SESSION['force_reset'] == 1) {
+        $currentPage = basename($_SERVER['PHP_SELF']);
+        if ($currentPage != 'reset-password.php') {
+            header("Location: reset-password.php");
+            exit();
+        }
     }
 }
 

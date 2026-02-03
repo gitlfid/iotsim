@@ -28,7 +28,9 @@ if (!function_exists('hasAccess')) {
 }
 ?>
 
-<aside id="sidebar" class="group fixed left-0 top-0 z-50 flex h-screen w-[280px] flex-col overflow-y-hidden bg-white dark:bg-[#24303F] duration-300 ease-in-out lg:static lg:translate-x-0 -translate-x-full border-r border-slate-100 dark:border-slate-800">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<aside id="sidebar" style="font-family: 'Inter', sans-serif;" class="group fixed left-0 top-0 z-50 flex h-screen w-[280px] flex-col overflow-y-hidden bg-white dark:bg-[#24303F] duration-300 ease-in-out lg:static lg:translate-x-0 -translate-x-full border-r border-slate-100 dark:border-slate-800">
     
     <div class="flex items-center justify-between gap-2 px-6 pt-10 pb-6 lg:pt-12 lg:pb-8">
         <a href="dashboard.php" class="flex items-center gap-3">
@@ -122,7 +124,8 @@ if (!function_exists('hasAccess')) {
                     </li>
                     <?php endif; ?>
 
-                    <?php if(hasAccess('manage_role')): ?> <li>
+                    <?php if(hasAccess('manage_role')): ?> 
+                    <li>
                         <a href="manage-smtp.php" 
                         class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'manage-smtp.php') ? $active_link_style : $inactive_link_style; ?>">
                             <i class="<?php echo getIconClass('manage-smtp.php', $current_page, 'ph-envelope-simple'); ?>"></i>

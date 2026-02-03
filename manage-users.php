@@ -8,20 +8,20 @@ if ($_SESSION['role'] !== 'superadmin' && $_SESSION['role'] !== 'admin') {
     exit();
 }
 
-// --- HANDLE POST REQUESTS ---
+// --- HANDLE POST REQUESTS (LOGIC TETAP SAMA) ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
     // 1. ADD / EDIT USER
     if (isset($_POST['action']) && ($_POST['action'] == 'add' || $_POST['action'] == 'edit')) {
         $username = $_POST['username'];
-        $email = $_POST['email']; // Field Baru
+        $email = $_POST['email']; 
         $role = $_POST['role'];
         $user_id = isset($_POST['user_id']) ? $_POST['user_id'] : null;
         $access_all = isset($_POST['access_all']) ? 1 : 0;
         $company_ids = ($access_all == 0 && isset($_POST['company_ids'])) ? $_POST['company_ids'] : [];
 
         if ($_POST['action'] == 'add') {
-            // Check Duplicate Username/Email
+            // Check Duplicate
             $check = $conn->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
             $check->bind_param("ss", $username, $email);
             $check->execute();
@@ -30,17 +30,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
 
             // AUTO GENERATE PASSWORD
-            // Jika kosong, buat password acak. Jika diisi, pakai inputan.
             $plain_password = !empty($_POST['password']) ? $_POST['password'] : generateStrongPassword(8);
             $hashed_password = password_hash($plain_password, PASSWORD_DEFAULT);
             
-            $stmt = $conn->prepare("INSERT INTO users (username, email, password, role, is_active, access_all_companies) VALUES (?, ?, ?, ?, 1, ?)");
+            // Set force_reset = 1
+            $stmt = $conn->prepare("INSERT INTO users (username, email, password, role, is_active, access_all_companies, force_reset) VALUES (?, ?, ?, ?, 1, ?, 1)");
             $stmt->bind_param("ssssi", $username, $email, $hashed_password, $role, $access_all);
             
             if ($stmt->execute()) {
                 $new_user_id = $stmt->insert_id;
                 
-                // Assign Company Scope
+                // Assign Company
                 if($access_all == 0 && !empty($company_ids)){
                     $stmt_comp = $conn->prepare("INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)");
                     foreach($company_ids as $cid){
@@ -49,30 +49,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     }
                 }
 
-                // --- SEND EMAIL NOTIFICATION ---
+                // --- SEND EMAIL ---
                 $subject = "Welcome to IoT Platform - Account Credentials";
                 $body = "
                 <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'>
                     <h2 style='color: #4F46E5;'>Welcome, $username!</h2>
-                    <p>Your account has been successfully created. You can now access the IoT Platform dashboard.</p>
-                    
+                    <p>Your account has been created successfully.</p>
                     <div style='background-color: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0;'>
                         <p style='margin: 5px 0;'><strong>Username:</strong> $username</p>
                         <p style='margin: 5px 0;'><strong>Email:</strong> $email</p>
                         <p style='margin: 5px 0;'><strong>Password:</strong> <span style='font-family: monospace; background: #e0e7ff; color: #4338ca; padding: 2px 6px; rounded: 4px;'>$plain_password</span></p>
-                        <p style='margin: 5px 0;'><strong>Role:</strong> " . ucfirst($role) . "</p>
                     </div>
-
-                    <p>Please login and change your password immediately for security reasons.</p>
-                    <hr style='border: 0; border-top: 1px solid #eee; margin: 20px 0;'>
-                    <p style='font-size: 12px; color: #6b7280;'>This is an automated message, please do not reply directly.</p>
-                </div>
-                ";
+                    <p>Please login and change your password immediately.</p>
+                </div>";
 
                 $mailRes = sendEmail($email, $subject, $body);
                 $mailMsg = $mailRes['status'] ? "Email sent." : "Email failed: " . $mailRes['msg'];
 
-                header("Location: manage-users.php?msg=User created successfully. $mailMsg&type=success"); exit;
+                header("Location: manage-users.php?msg=User created. $mailMsg&type=success"); exit;
             }
         } 
         else if ($_POST['action'] == 'edit') {
@@ -99,7 +93,48 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
     }
 
-    // Toggle Suspend
+    // 2. RESET PASSWORD
+    if (isset($_POST['action']) && $_POST['action'] == 'reset_password') {
+        $uid = $_POST['user_id'];
+        
+        $qUser = $conn->query("SELECT username, email FROM users WHERE id='$uid'");
+        if ($qUser->num_rows > 0) {
+            $uData = $qUser->fetch_assoc();
+            $email = $uData['email'];
+            $username = $uData['username'];
+
+            $new_password = generateStrongPassword(10); 
+            $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
+
+            // Update Database
+            $conn->query("UPDATE users SET password='$hashed_password', force_reset=1 WHERE id='$uid'");
+
+            // Kirim Email
+            $subject = "Password Reset - IoT Platform";
+            $body = "
+            <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'>
+                <h2 style='color: #F59E0B;'>Password Reset</h2>
+                <p>Hello <strong>$username</strong>,</p>
+                <p>Your password has been reset by Administrator.</p>
+                
+                <div style='background-color: #FFFBEB; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #FEF3C7;'>
+                    <p style='margin: 5px 0; color: #92400E;'><strong>New Password:</strong></p>
+                    <p style='margin: 5px 0; font-size: 18px; font-family: monospace; font-weight: bold; color: #D97706;'>$new_password</p>
+                </div>
+
+                <p>Use this password to login. You will be asked to create a new password immediately.</p>
+            </div>";
+
+            $mailRes = sendEmail($email, $subject, $body);
+            $msgStatus = $mailRes['status'] ? "New password sent to email." : "Password reset but email failed: ".$mailRes['msg'];
+            
+            header("Location: manage-users.php?msg=$msgStatus&type=success"); exit;
+        } else {
+            header("Location: manage-users.php?msg=User not found&type=error"); exit;
+        }
+    }
+
+    // 3. TOGGLE SUSPEND
     if (isset($_POST['action']) && $_POST['action'] == 'toggle_status') {
         $uid = $_POST['user_id'];
         $status = $_POST['status']; 
@@ -107,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         echo json_encode(['status'=>'success']); exit;
     }
 
-    // Delete User
+    // 4. DELETE USER
     if (isset($_POST['action']) && $_POST['action'] == 'delete') {
         $uid = $_POST['user_id'];
         if ($uid != $_SESSION['user_id']) {
@@ -118,7 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// Fetch Data Logic (Hierarchy)
+// --- FETCH DATA ---
 $raw_companies = [];
 $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
 while($r = $res->fetch_assoc()) {
@@ -159,10 +194,10 @@ while($u = $q->fetch_assoc()) {
 
 function getLevelBadge($lvl) {
     switch($lvl) {
-        case 1: return "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300 dark:border-indigo-800";
-        case 2: return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/50 dark:text-blue-300 dark:border-blue-800";
-        case 3: return "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-900/50 dark:text-teal-300 dark:border-teal-800";
-        default: return "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-700 dark:text-slate-300";
+        case 1: return "bg-indigo-50 text-indigo-700 border-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20";
+        case 2: return "bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20";
+        case 3: return "bg-teal-50 text-teal-700 border-teal-100 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-500/20";
+        default: return "bg-slate-50 text-slate-700 border-slate-100 dark:bg-slate-700/50 dark:text-slate-400 dark:border-slate-700";
     }
 }
 ?>
@@ -178,86 +213,92 @@ function getLevelBadge($lvl) {
     <script>
         tailwind.config = {
             darkMode: 'class',
-            theme: { extend: { colors: { primary: '#4F46E5', darkcard: '#24303F' } } }
+            theme: {
+                fontFamily: { sans: ['Inter', 'sans-serif'] },
+                extend: { colors: { primary: '#4F46E5', darkcard: '#24303F', darkbg: '#1A222C' } }
+            }
         }
     </script>
     <style>
         .comp-check:checked + div { background-color: #EEF2FF; border-color: #4F46E5; }
         .dark .comp-check:checked + div { background-color: #312E81; border-color: #6366F1; }
         .list-disabled { opacity: 0.5; pointer-events: none; filter: grayscale(1); }
-        .modal-anim { transition: all 0.3s ease-out; }
+        .modal-anim { transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
     </style>
 </head>
-<body class="bg-[#F8FAFC] dark:bg-gray-900 text-slate-600 dark:text-slate-300 font-sans">
-    <div class="flex h-screen">
+<body class="bg-[#F8FAFC] dark:bg-darkbg text-slate-600 dark:text-slate-300 font-sans antialiased">
+    <div class="flex h-screen overflow-hidden">
         <?php include 'includes/sidebar.php'; ?>
         
-        <div class="flex-1 flex flex-col overflow-hidden">
+        <div class="flex-1 flex flex-col overflow-hidden relative">
             <?php include 'includes/header.php'; ?>
             
-            <main class="flex-1 overflow-y-auto p-6">
+            <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
                 <div class="max-w-7xl mx-auto">
                     
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                         <div>
-                            <h1 class="text-2xl font-bold text-slate-800 dark:text-white">User Management</h1>
-                            <p class="text-sm text-slate-500 mt-1">Manage users, access control, and auto-email distribution.</p>
+                            <h1 class="text-2xl font-bold text-slate-800 dark:text-white tracking-tight">User Management</h1>
+                            <p class="text-sm text-slate-500 mt-1">Manage system access, roles, and automated notifications.</p>
                         </div>
-                        <button onclick="openModal('add')" class="bg-primary hover:bg-indigo-600 text-white px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/30 flex items-center gap-2 transition-all active:scale-95 font-medium">
-                            <i class="ph ph-user-plus text-lg"></i> Add New User
+                        <button onclick="openModal('add')" class="bg-primary hover:bg-indigo-600 text-white px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 flex items-center gap-2 transition-all active:scale-95 font-medium border border-transparent">
+                            <i class="ph ph-user-plus text-lg"></i>
+                            <span>Add New User</span>
                         </button>
                     </div>
 
                     <?php if(isset($_GET['msg'])): $isError = (isset($_GET['type']) && $_GET['type']=='error'); ?>
-                        <div class="mb-6 p-4 rounded-xl border flex items-center gap-2 <?= $isError ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-700 border-green-200' ?>">
-                            <i class="ph <?= $isError ? 'ph-warning' : 'ph-check-circle' ?> text-xl"></i> 
-                            <?= htmlspecialchars($_GET['msg']) ?>
+                        <div class="mb-6 p-4 rounded-xl border flex items-center gap-3 <?= $isError ? 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800' : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800' ?> animate-fade-in-up">
+                            <div class="p-2 bg-white dark:bg-darkcard rounded-full shadow-sm">
+                                <i class="ph <?= $isError ? 'ph-warning' : 'ph-check-circle' ?> text-xl"></i> 
+                            </div>
+                            <span class="font-medium text-sm"><?= htmlspecialchars($_GET['msg']) ?></span>
                         </div>
                     <?php endif; ?>
 
-                    <div class="bg-white dark:bg-darkcard rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 overflow-hidden">
+                    <div class="bg-white dark:bg-darkcard rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
                         <div class="overflow-x-auto">
-                            <table class="w-full text-left text-sm border-collapse">
-                                <thead class="bg-slate-50 dark:bg-slate-800 text-xs uppercase font-bold text-slate-500 dark:text-slate-400">
+                            <table class="w-full text-left border-collapse">
+                                <thead class="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
                                     <tr>
-                                        <th class="px-6 py-4">User Details</th>
-                                        <th class="px-6 py-4">Role</th>
-                                        <th class="px-6 py-4 w-[40%]">Assigned Scope</th>
-                                        <th class="px-6 py-4 text-center">Status</th>
-                                        <th class="px-6 py-4 text-right">Action</th>
+                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">User Details</th>
+                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Role</th>
+                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider w-[35%]">Assigned Scope</th>
+                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Status</th>
+                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Action</th>
                                     </tr>
                                 </thead>
-                                <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
+                                <tbody class="divide-y divide-slate-100 dark:divide-slate-700/50">
                                     <?php foreach($users as $user): 
                                         $roleColors = [
-                                            'superadmin' => 'bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300',
-                                            'admin' => 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
-                                            'sub-admin' => 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300',
-                                            'user' => 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                                            'superadmin' => 'bg-purple-50 text-purple-700 border-purple-100 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20',
+                                            'admin' => 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20',
+                                            'sub-admin' => 'bg-cyan-50 text-cyan-700 border-cyan-100 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-500/20',
+                                            'user' => 'bg-slate-50 text-slate-700 border-slate-100 dark:bg-slate-700/50 dark:text-slate-400 dark:border-slate-700'
                                         ];
                                         $badge = $roleColors[$user['role']] ?? $roleColors['user'];
                                         
+                                        // Scope Display
                                         if ($user['access_all_companies'] == 1) {
                                             $scopeDisplay = '
-                                            <div class="flex items-center gap-2 text-amber-600 dark:text-amber-400">
-                                                <i class="ph ph-globe-hemisphere-west text-xl"></i>
-                                                <div>
+                                            <div class="flex items-center gap-2.5 p-2 rounded-lg bg-amber-50 border border-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20 w-fit">
+                                                <i class="ph ph-globe-hemisphere-west text-lg"></i>
+                                                <div class="leading-tight">
                                                     <span class="block text-xs font-bold uppercase tracking-wide">Global Access</span>
-                                                    <span class="text-[11px] opacity-80">Full Hierarchy View</span>
                                                 </div>
                                             </div>';
                                         } else {
                                             $count = count($user['assigned_details']);
                                             if ($count == 0) {
-                                                $scopeDisplay = '<span class="text-red-400 italic flex items-center gap-1"><i class="ph ph-warning"></i> Unassigned</span>';
+                                                $scopeDisplay = '<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-50 text-red-600 text-xs font-medium border border-red-100 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800"><i class="ph ph-warning"></i> Unassigned</span>';
                                             } else {
-                                                $listHTML = '<div class="flex flex-wrap gap-2">';
+                                                $listHTML = '<div class="flex flex-wrap gap-1.5">';
                                                 foreach($user['assigned_details'] as $comp) {
                                                     $lvlClass = getLevelBadge($comp['level']);
                                                     $listHTML .= '
-                                                    <div class="inline-flex items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 shadow-sm">
-                                                        <span class="text-xs font-medium text-slate-700 dark:text-slate-300 mr-1">'.$comp['name'].'</span>
-                                                        <span class="text-[9px] font-bold px-1.5 py-0.5 rounded border '.$lvlClass.'">Lvl '.$comp['level'].'</span>
+                                                    <div class="inline-flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 pl-2 pr-1 py-0.5 shadow-sm">
+                                                        <span class="text-[11px] font-medium text-slate-600 dark:text-slate-300">'.$comp['name'].'</span>
+                                                        <span class="text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider '.$lvlClass.'">Lvl '.$comp['level'].'</span>
                                                     </div>';
                                                 }
                                                 $listHTML .= '</div>';
@@ -265,43 +306,56 @@ function getLevelBadge($lvl) {
                                             }
                                         }
                                         $isActive = $user['is_active'];
+                                        
+                                        // Avatar Initials
+                                        $initials = strtoupper(substr($user['username'], 0, 2));
                                     ?>
-                                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
-                                        <td class="px-6 py-4">
+                                    <tr class="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors group">
+                                        <td class="px-6 py-4 align-middle">
                                             <div class="flex items-center gap-3">
-                                                <div class="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 font-bold uppercase text-lg shadow-inner">
-                                                    <?= substr($user['username'], 0, 1) ?>
+                                                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-50 to-slate-100 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center text-primary font-bold text-sm shadow-inner border border-slate-200 dark:border-slate-600">
+                                                    <?= $initials ?>
                                                 </div>
                                                 <div>
-                                                    <p class="font-bold text-slate-800 dark:text-white"><?= $user['username'] ?></p>
-                                                    <p class="text-xs text-slate-400"><?= $user['email'] ?? '-' ?></p>
+                                                    <p class="font-bold text-slate-800 dark:text-white text-sm"><?= $user['username'] ?></p>
+                                                    <p class="text-xs text-slate-500 dark:text-slate-400 font-mono mt-0.5"><?= $user['email'] ?? '-' ?></p>
                                                 </div>
                                             </div>
                                         </td>
-                                        <td class="px-6 py-4">
-                                            <span class="inline-block px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border border-transparent shadow-sm <?= $badge ?>">
+                                        <td class="px-6 py-4 align-middle">
+                                            <span class="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border shadow-sm <?= $badge ?>">
                                                 <?= $user['role'] ?>
                                             </span>
                                         </td>
-                                        <td class="px-6 py-4">
+                                        <td class="px-6 py-4 align-middle">
                                             <?= $scopeDisplay ?>
                                         </td>
-                                        <td class="px-6 py-4 text-center">
-                                            <label class="relative inline-flex items-center cursor-pointer">
+                                        <td class="px-6 py-4 align-middle text-center">
+                                            <label class="relative inline-flex items-center cursor-pointer group-hover:scale-105 transition-transform">
                                                 <input type="checkbox" class="sr-only peer" onchange="toggleStatus(<?= $user['id'] ?>, this)" <?= $isActive ? 'checked' : '' ?>>
-                                                <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                                                <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 shadow-sm"></div>
                                             </label>
                                         </td>
-                                        <td class="px-6 py-4 text-right">
-                                            <div class="flex items-center justify-end gap-2">
-                                                <button onclick='openEdit(<?= json_encode($user) ?>)' class="p-2 rounded-lg text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/30 dark:text-slate-400 dark:hover:text-indigo-400 transition-colors">
+                                        <td class="px-6 py-4 align-middle text-right">
+                                            <div class="flex items-center justify-end gap-1">
+                                                
+                                                <button onclick='openEdit(<?= json_encode($user) ?>)' class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-400 transition-all" title="Edit User">
                                                     <i class="ph ph-pencil-simple text-lg"></i>
                                                 </button>
+
+                                                <form method="POST" onsubmit="return confirm('Reset password for <?= $user['username'] ?>?');" class="inline-block">
+                                                    <input type="hidden" name="action" value="reset_password">
+                                                    <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                                                    <button type="submit" class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-500/10 dark:hover:text-amber-400 transition-all" title="Reset Password">
+                                                        <i class="ph ph-key text-lg"></i>
+                                                    </button>
+                                                </form>
+
                                                 <?php if($user['id'] != $_SESSION['user_id']): ?>
                                                 <form method="POST" onsubmit="return confirm('Delete this user?');" class="inline-block">
                                                     <input type="hidden" name="action" value="delete">
                                                     <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
-                                                    <button type="submit" class="p-2 rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:text-slate-400 dark:hover:text-red-400 transition-colors">
+                                                    <button type="submit" class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400 transition-all" title="Delete User">
                                                         <i class="ph ph-trash text-lg"></i>
                                                     </button>
                                                 </form>
@@ -320,104 +374,127 @@ function getLevelBadge($lvl) {
         </div>
     </div>
 
-    <div id="userModal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-white dark:bg-darkcard w-full max-w-lg rounded-2xl shadow-2xl transform transition-all scale-95 opacity-0 modal-anim flex flex-col max-h-[90vh]">
-            
-            <div class="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-darkcard rounded-t-2xl z-10">
-                <div>
-                    <h3 id="modalTitle" class="text-xl font-bold text-slate-800 dark:text-white">Add New User</h3>
-                    <p class="text-xs text-slate-500 mt-0.5">Credentials will be emailed automatically.</p>
+    <div id="userModal" class="fixed inset-0 z-50 hidden">
+        <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity opacity-0" id="modalBackdrop" onclick="closeModal()"></div>
+        
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div class="bg-white dark:bg-darkcard w-full max-w-lg rounded-2xl shadow-2xl transform transition-all scale-95 opacity-0 modal-anim flex flex-col max-h-[90vh] relative z-10" id="modalContent">
+                
+                <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-darkcard rounded-t-2xl">
+                    <div>
+                        <h3 id="modalTitle" class="text-lg font-bold text-slate-800 dark:text-white">Add New User</h3>
+                        <p class="text-xs text-slate-500 mt-0.5">Configure access and credentials.</p>
+                    </div>
+                    <button onclick="closeModal()" class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 transition-colors">
+                        <i class="ph ph-x text-lg"></i>
+                    </button>
                 </div>
-                <button onclick="closeModal()" class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 dark:bg-slate-800 dark:hover:bg-slate-700 transition-colors">
-                    <i class="ph ph-x text-lg"></i>
-                </button>
-            </div>
-            
-            <div class="overflow-y-auto p-6">
-                <form method="POST" id="userForm">
-                    <input type="hidden" name="action" id="formAction" value="add">
-                    <input type="hidden" name="user_id" id="userId">
+                
+                <div class="overflow-y-auto p-6 custom-scrollbar">
+                    <form method="POST" id="userForm">
+                        <input type="hidden" name="action" id="formAction" value="add">
+                        <input type="hidden" name="user_id" id="userId">
 
-                    <div class="space-y-5">
-                        
-                        <div class="grid grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Username</label>
-                                <input type="text" name="username" id="inputUsername" required class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-primary focus:border-primary outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Role</label>
-                                <select name="role" id="inputRole" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-primary outline-none">
-                                    <option value="user">User</option>
-                                    <option value="sub-admin">Sub-Admin</option>
-                                    <option value="admin">Admin</option>
-                                    <option value="superadmin">Superadmin</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div>
-                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Email Address</label>
-                            <input type="email" name="email" id="inputEmail" required class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-primary outline-none">
-                        </div>
-
-                        <div>
-                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Password</label>
-                            <input type="password" name="password" id="inputPassword" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-primary outline-none" placeholder="Auto-generated if empty">
-                            <p class="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
-                                <i class="ph ph-info"></i> Leave empty to generate secure password automatically.
-                            </p>
-                        </div>
-
-                        <div class="pt-2 border-t border-slate-100 dark:border-slate-800">
-                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-3">Company Access</label>
+                        <div class="space-y-5">
                             
-                            <label class="flex items-center p-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-800/50 cursor-pointer mb-3 transition-colors hover:bg-amber-100 dark:hover:bg-amber-900/20">
-                                <input type="checkbox" name="access_all" id="checkAccessAll" class="w-5 h-5 text-amber-600 rounded focus:ring-amber-500 border-gray-300" onchange="toggleCompanyList(this)">
-                                <div class="ml-3">
-                                    <span class="block text-sm font-bold text-amber-800 dark:text-amber-500">Global Access (All Companies)</span>
-                                    <span class="block text-xs text-amber-600/80 dark:text-amber-500/70">User sees all hierarchy.</span>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="col-span-1">
+                                    <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Username</label>
+                                    <div class="relative">
+                                        <i class="ph ph-user absolute left-3 top-3 text-slate-400"></i>
+                                        <input type="text" name="username" id="inputUsername" required class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all placeholder:text-slate-400 dark:text-white" placeholder="john_doe">
+                                    </div>
                                 </div>
-                            </label>
+                                <div class="col-span-1">
+                                    <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Role</label>
+                                    <div class="relative">
+                                        <select name="role" id="inputRole" class="w-full pl-3 pr-8 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none cursor-pointer appearance-none dark:text-white">
+                                            <option value="user">User</option>
+                                            <option value="sub-admin">Sub-Admin</option>
+                                            <option value="admin">Admin</option>
+                                            <option value="superadmin">Superadmin</option>
+                                        </select>
+                                        <i class="ph ph-caret-down absolute right-3 top-3 text-slate-400 pointer-events-none"></i>
+                                    </div>
+                                </div>
+                            </div>
 
-                            <div id="specificCompanyList" class="transition-all duration-300">
-                                <div class="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl p-2 bg-slate-50 dark:bg-slate-800/50 grid grid-cols-1 gap-1">
-                                    <?php foreach($companies as $c): 
-                                        $lvlBadge = getLevelBadge($c['level']);
-                                        $indent = $c['depth'] * 20; 
-                                        $connector = ($c['depth'] > 0) ? '<span class="text-slate-300 mr-2">└─</span>' : '';
-                                    ?>
-                                    <label class="cursor-pointer relative group">
-                                        <input type="checkbox" name="company_ids[]" value="<?= $c['id'] ?>" class="comp-check sr-only peer">
-                                        <div class="px-3 py-2.5 rounded-lg border border-transparent text-sm font-medium text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800 transition-all peer-checked:bg-indigo-50 peer-checked:text-indigo-600 peer-checked:border-indigo-200 dark:peer-checked:bg-indigo-900/30 dark:peer-checked:text-indigo-300 dark:peer-checked:border-indigo-800 flex items-center justify-between shadow-sm" style="margin-left: <?= $indent ?>px">
-                                            <div class="flex items-center">
-                                                <?= $connector ?>
-                                                <span><?= $c['company_name'] ?></span>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Email Address</label>
+                                <div class="relative">
+                                    <i class="ph ph-envelope absolute left-3 top-3 text-slate-400"></i>
+                                    <input type="email" name="email" id="inputEmail" required class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all placeholder:text-slate-400 dark:text-white" placeholder="email@company.com">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Password</label>
+                                <div class="relative">
+                                    <i class="ph ph-lock-key absolute left-3 top-3 text-slate-400"></i>
+                                    <input type="password" name="password" id="inputPassword" class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all placeholder:text-slate-400 dark:text-white" placeholder="Auto-generated if empty">
+                                </div>
+                                <p class="text-[10px] text-slate-400 mt-1.5 flex items-center gap-1.5">
+                                    <i class="ph ph-info text-primary"></i> 
+                                    Leave empty to generate a secure password automatically.
+                                </p>
+                            </div>
+
+                            <div class="pt-4 border-t border-slate-100 dark:border-slate-800">
+                                <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-3">Data Access Scope</label>
+                                
+                                <label class="flex items-start p-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-800/50 cursor-pointer mb-3 transition-all hover:shadow-sm hover:border-amber-300">
+                                    <div class="flex h-5 items-center">
+                                        <input type="checkbox" name="access_all" id="checkAccessAll" class="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500" onchange="toggleCompanyList(this)">
+                                    </div>
+                                    <div class="ml-3 text-sm">
+                                        <span class="block font-bold text-amber-800 dark:text-amber-500">Global Access (All Companies)</span>
+                                        <span class="block text-xs text-amber-700/70 dark:text-amber-500/70 mt-0.5">User can view hierarchy tree of all companies.</span>
+                                    </div>
+                                </label>
+
+                                <div id="specificCompanyList" class="transition-all duration-300">
+                                    <div class="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl p-1 bg-slate-50 dark:bg-slate-800/50 space-y-0.5 custom-scrollbar">
+                                        <?php foreach($companies as $c): 
+                                            $lvlBadge = getLevelBadge($c['level']);
+                                            $indent = $c['depth'] * 24; 
+                                            $connector = ($c['depth'] > 0) ? '<i class="ph ph-arrow-elbow-down-right text-slate-300 mr-2"></i>' : '';
+                                        ?>
+                                        <label class="cursor-pointer relative group block">
+                                            <input type="checkbox" name="company_ids[]" value="<?= $c['id'] ?>" class="comp-check sr-only peer">
+                                            
+                                            <div class="px-3 py-2 rounded-lg border border-transparent text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-700 hover:shadow-sm transition-all peer-checked:bg-indigo-50 peer-checked:text-indigo-700 peer-checked:border-indigo-100 dark:peer-checked:bg-indigo-900/30 dark:peer-checked:text-indigo-300 dark:peer-checked:border-indigo-800 flex items-center justify-between" style="padding-left: <?= ($c['depth'] > 0) ? $indent : '12' ?>px">
+                                                <div class="flex items-center">
+                                                    <?= $connector ?>
+                                                    <span><?= $c['company_name'] ?></span>
+                                                </div>
+                                                <div class="flex items-center gap-2">
+                                                    <span class="text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase tracking-wider <?= $lvlBadge ?>">Lvl <?= $c['level'] ?></span>
+                                                    <i class="ph ph-check-circle-fill opacity-0 peer-checked:opacity-100 text-indigo-600 dark:text-indigo-400 transition-all scale-0 peer-checked:scale-100"></i>
+                                                </div>
                                             </div>
-                                            <div class="flex items-center gap-2">
-                                                <span class="text-[9px] px-1.5 py-0.5 rounded border font-bold <?= $lvlBadge ?>">Lvl <?= $c['level'] ?></span>
-                                                <i class="ph ph-check-circle opacity-0 peer-checked:opacity-100 text-indigo-600 dark:text-indigo-400 transition-opacity"></i>
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <?php endforeach; ?>
+                                        </label>
+                                        <?php endforeach; ?>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div class="mt-8 flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-                        <button type="button" onclick="closeModal()" class="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">Cancel</button>
-                        <button type="submit" class="px-6 py-2.5 rounded-xl bg-primary hover:bg-indigo-600 text-white font-bold shadow-lg shadow-indigo-500/30 transition-all active:scale-95">Save & Send Email</button>
-                    </div>
-                </form>
+                        <div class="mt-8 flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                            <button type="button" onclick="closeModal()" class="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-sm">Cancel</button>
+                            <button type="submit" class="px-6 py-2.5 rounded-xl bg-primary hover:bg-indigo-600 text-white font-bold shadow-lg shadow-indigo-500/30 transition-all active:scale-95 text-sm flex items-center gap-2">
+                                <i class="ph ph-paper-plane-right"></i> Save & Send Email
+                            </button>
+                        </div>
+                    </form>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
         const modal = document.getElementById('userModal');
-        const modalBox = modal.querySelector('.modal-anim');
+        const modalBackdrop = document.getElementById('modalBackdrop');
+        const modalContent = document.getElementById('modalContent');
         const listContainer = document.getElementById('specificCompanyList');
         const checkAll = document.getElementById('checkAccessAll');
 
@@ -431,9 +508,11 @@ function getLevelBadge($lvl) {
 
         function openModal(mode) {
             modal.classList.remove('hidden');
+            // Animasi Masuk
             setTimeout(() => {
-                modalBox.classList.remove('scale-95', 'opacity-0');
-                modalBox.classList.add('scale-100', 'opacity-100');
+                modalBackdrop.classList.remove('opacity-0');
+                modalContent.classList.remove('scale-95', 'opacity-0');
+                modalContent.classList.add('scale-100', 'opacity-100');
             }, 10);
 
             if(mode === 'add') {
@@ -463,20 +542,23 @@ function getLevelBadge($lvl) {
             toggleCompanyList(checkAll);
 
             document.querySelectorAll('.comp-check').forEach(cb => cb.checked = false);
-            if(user.assigned_details && user.assigned_details.length > 0) {
-                user.assigned_details.forEach(item => {
-                    const cb = document.querySelector(`.comp-check[value="${item.id}"]`);
+            if(user.assigned_ids && user.assigned_ids.length > 0) {
+                user.assigned_ids.forEach(id => {
+                    const cb = document.querySelector(`.comp-check[value="${id}"]`);
                     if(cb) cb.checked = true;
                 });
             }
         }
 
         function closeModal() {
-            modalBox.classList.remove('scale-100', 'opacity-100');
-            modalBox.classList.add('scale-95', 'opacity-0');
+            // Animasi Keluar
+            modalBackdrop.classList.add('opacity-0');
+            modalContent.classList.remove('scale-100', 'opacity-100');
+            modalContent.classList.add('scale-95', 'opacity-0');
+            
             setTimeout(() => {
                 modal.classList.add('hidden');
-            }, 200);
+            }, 300); // Sesuaikan durasi transition CSS
         }
 
         function toggleStatus(userId, toggle) {
