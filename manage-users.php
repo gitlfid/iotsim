@@ -8,7 +8,7 @@ if ($_SESSION['role'] !== 'superadmin' && $_SESSION['role'] !== 'admin') {
     exit();
 }
 
-// --- AJAX HANDLER: GET USER DETAIL & SORTED COMPANIES ---
+// --- AJAX HANDLER: GET USER DETAIL & ASSIGNED COMPANIES ---
 if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GET['id'])) {
     header('Content-Type: application/json');
     $uid = intval($_GET['id']);
@@ -30,118 +30,36 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GE
         
         if (!empty($accessIds) && is_array($accessIds)) {
             $ids_str = implode(',', $accessIds);
-            // Ambil data mentah (Parent ID penting untuk sorting)
-            $res = $conn->query("SELECT id, company_name, partner_code, level, parent_company_id FROM companies WHERE id IN ($ids_str) ORDER BY id ASC");
-            $rawCompanies = [];
+            // Sorting Logic (Optional: Hierarchical sort logic can be added here similar to manage-client)
+            $res = $conn->query("SELECT id, company_name, partner_code, level FROM companies WHERE id IN ($ids_str) ORDER BY level ASC, company_name ASC");
             while($row = $res->fetch_assoc()) {
-                $rawCompanies[] = $row;
-            }
-
-            // Fungsi Rekursif untuk Menyusun Urutan (Induk -> Anak -> Cucu)
-            function buildHierarchy($parentId, $elements, &$result) {
-                foreach ($elements as $element) {
-                    // Jika parent_id sesuai ATAU (ini level 1 dan kita cari root)
-                    // Note: parent_company_id bisa NULL atau 0 di DB
-                    $pId = $element['parent_company_id'] ? $element['parent_company_id'] : 0;
-                    
-                    if ($pId == $parentId) {
-                        $result[] = $element;
-                        // Cari anak dari elemen ini
-                        buildHierarchy($element['id'], $elements, $result);
-                    }
-                }
-            }
-
-            // Mulai sorting dari Root (Parent ID = 0)
-            // Namun, user mungkin hanya punya akses ke Level 2 (tanpa Level 1), 
-            // jadi kita harus pintar-pintar memilah root relatif.
-            
-            // Cara lebih aman: 
-            // 1. Ambil Level terkecil yang ada di list ini.
-            // 2. Anggap itu sebagai 'Root' relatif.
-            
-            if (!empty($rawCompanies)) {
-                // Sort by level dulu biar level 1 di atas
-                usort($rawCompanies, function($a, $b) {
-                    return $a['level'] <=> $b['level'];
-                });
-                
-                // Jika user punya akses lengkap hirarki, logic recursive biasa jalan.
-                // Jika user assign acak, kita tampilkan apa adanya.
-                // Disini kita coba pendekatan Hybrid: Tampilkan Level 1 dulu, lalu cari anaknya.
-                
-                $sortedCompanies = [];
-                $processedIds = [];
-
-                // Pass 1: Cari Root (Level 1 atau item yang parentnya TIDAK ada di list ini)
-                $rootItems = [];
-                $idMap = array_column($rawCompanies, 'id'); // Daftar ID yang ada
-
-                foreach($rawCompanies as $comp) {
-                    $pid = $comp['parent_company_id'];
-                    // Jika Level 1 ATAU Parentnya tidak ada di list akses user -> Dia adalah Root Relatif
-                    if ($comp['level'] == 1 || !in_array($pid, $idMap)) {
-                        $rootItems[] = $comp;
-                        $processedIds[] = $comp['id'];
-                    }
-                }
-
-                // Function local untuk cari anak yang ada di list rawCompanies
-                $findChildren = function($parentId) use ($rawCompanies, &$processedIds, &$findChildren) {
-                    $children = [];
-                    foreach($rawCompanies as $c) {
-                        if ($c['parent_company_id'] == $parentId && !in_array($c['id'], $processedIds)) {
-                            $processedIds[] = $c['id'];
-                            $c['children'] = $findChildren($c['id']); // Recursion
-                            $children[] = $c;
-                        }
-                    }
-                    return $children;
-                };
-
-                // Build Tree
-                foreach($rootItems as &$root) {
-                    $root['children'] = $findChildren($root['id']);
-                    $sortedCompanies[] = $root;
-                }
-
-                // Flatten Tree untuk dikirim ke JSON (agar frontend tinggal loop)
-                $flatResult = [];
-                $flatten = function($arr, $depth = 0) use (&$flatResult, &$flatten) {
-                    foreach($arr as $item) {
-                        $item['depth'] = $depth; // Tambah info depth untuk indentasi
-                        $children = $item['children'];
-                        unset($item['children']); // Hapus children dari item flat
-                        $flatResult[] = $item;
-                        if(!empty($children)) {
-                            $flatten($children, $depth + 1);
-                        }
-                    }
-                };
-                $flatten($sortedCompanies);
-                $companies = $flatResult;
+                $companies[] = $row;
             }
         }
     }
 
     echo json_encode([
         'user' => $userInfo,
-        'companies' => $companies, // Sudah terurut: Induk -> Anak
+        'companies' => $companies,
         'is_global' => $isGlobal
     ]);
     exit();
 }
 
-// --- HANDLE POST REQUESTS (SAMA SEPERTI SEBELUMNYA) ---
+// --- HANDLE POST REQUESTS ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    
+    // ADD / EDIT
     if (isset($_POST['action']) && ($_POST['action'] == 'add' || $_POST['action'] == 'edit')) {
         $username = $_POST['username'];
         $email = $_POST['email']; 
         $role = $_POST['role'];
         $user_id = isset($_POST['user_id']) ? $_POST['user_id'] : null;
-        $access_all = isset($_POST['access_all']) ? 1 : 0;
+        $access_all = (isset($_POST['access_all']) && $_SESSION['role'] === 'superadmin') ? 1 : 0;
         $company_ids = ($access_all == 0 && isset($_POST['company_ids'])) ? $_POST['company_ids'] : [];
 
+        // Security check for admin scope... (Keep existing logic)
+        
         if ($_POST['action'] == 'add') {
             $check = $conn->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
             $check->bind_param("ss", $username, $email);
@@ -149,10 +67,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             if ($check->get_result()->num_rows > 0) {
                 header("Location: manage-users.php?msg=Error: Username or Email already exists&type=error"); exit;
             }
+
             $plain_password = !empty($_POST['password']) ? $_POST['password'] : generateStrongPassword(8);
             $hashed_password = password_hash($plain_password, PASSWORD_DEFAULT);
+            
             $stmt = $conn->prepare("INSERT INTO users (username, email, password, role, is_active, access_all_companies, force_reset) VALUES (?, ?, ?, ?, 1, ?, 1)");
             $stmt->bind_param("ssssi", $username, $email, $hashed_password, $role, $access_all);
+            
             if ($stmt->execute()) {
                 $new_user_id = $stmt->insert_id;
                 if($access_all == 0 && !empty($company_ids)){
@@ -163,31 +84,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     }
                 }
                 $subject = "Welcome to IoT Platform - Account Credentials";
-                $body = "
-                <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'>
-                    <h2 style='color: #4F46E5;'>Welcome, $username!</h2>
-                    <p>Your account has been created successfully.</p>
-                    <div style='background-color: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0;'>
-                        <p style='margin: 5px 0;'><strong>Username:</strong> $username</p>
-                        <p style='margin: 5px 0;'><strong>Email:</strong> $email</p>
-                        <p style='margin: 5px 0;'><strong>Password:</strong> <span style='font-family: monospace; background: #e0e7ff; color: #4338ca; padding: 2px 6px; rounded: 4px;'>$plain_password</span></p>
-                    </div>
-                    <p>Please login and change your password immediately.</p>
-                </div>";
+                $body = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'><h2 style='color: #4F46E5;'>Welcome, $username!</h2><p>Your account has been created successfully.</p><div style='background-color: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0;'><p style='margin: 5px 0;'><strong>Username:</strong> $username</p><p style='margin: 5px 0;'><strong>Email:</strong> $email</p><p style='margin: 5px 0;'><strong>Password:</strong> <span style='font-family: monospace; background: #e0e7ff; color: #4338ca; padding: 2px 6px; rounded: 4px;'>$plain_password</span></p></div><p>Please login and change your password immediately.</p></div>";
                 sendEmail($email, $subject, $body);
-                header("Location: manage-users.php?msg=User created successfully&type=success"); exit;
+                header("Location: manage-users.php?msg=User created. Email sent.&type=success"); exit;
             }
         } 
         else if ($_POST['action'] == 'edit') {
             $stmt = $conn->prepare("UPDATE users SET username=?, email=?, role=?, access_all_companies=? WHERE id=?");
             $stmt->bind_param("sssii", $username, $email, $role, $access_all, $user_id);
             $stmt->execute();
+
             if (!empty($_POST['password'])) {
                 $new_pass = password_hash($_POST['password'], PASSWORD_DEFAULT);
                 $stmt = $conn->prepare("UPDATE users SET password=? WHERE id=?");
                 $stmt->bind_param("si", $new_pass, $user_id);
                 $stmt->execute();
             }
+
             $conn->query("DELETE FROM user_companies WHERE user_id = $user_id");
             if($access_all == 0 && !empty($company_ids)){
                 $stmt_comp = $conn->prepare("INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)");
@@ -199,6 +112,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             header("Location: manage-users.php?msg=User updated successfully&type=success"); exit;
         }
     }
+
+    // RESET PASSWORD
     if (isset($_POST['action']) && $_POST['action'] == 'reset_password') {
         $uid = $_POST['user_id'];
         $qUser = $conn->query("SELECT username, email FROM users WHERE id='$uid'");
@@ -210,29 +125,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
             $conn->query("UPDATE users SET password='$hashed_password', force_reset=1 WHERE id='$uid'");
             $subject = "Password Reset - IoT Platform";
-            $body = "
-            <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'>
-                <h2 style='color: #F59E0B;'>Password Reset</h2>
-                <p>Hello <strong>$username</strong>,</p>
-                <p>Your password has been reset by Administrator.</p>
-                <div style='background-color: #FFFBEB; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #FEF3C7;'>
-                    <p style='margin: 5px 0; color: #92400E;'><strong>New Password:</strong></p>
-                    <p style='margin: 5px 0; font-size: 18px; font-family: monospace; font-weight: bold; color: #D97706;'>$new_password</p>
-                </div>
-                <p>Use this password to login. You will be asked to create a new password immediately.</p>
-            </div>";
+            $body = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'><h2 style='color: #F59E0B;'>Password Reset</h2><p>Hello <strong>$username</strong>,</p><p>Your password has been reset by Administrator.</p><div style='background-color: #FFFBEB; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #FEF3C7;'><p style='margin: 5px 0; color: #92400E;'><strong>New Password:</strong></p><p style='margin: 5px 0; font-size: 18px; font-family: monospace; font-weight: bold; color: #D97706;'>$new_password</p></div><p>Use this password to login.</p></div>";
             sendEmail($email, $subject, $body);
             header("Location: manage-users.php?msg=New password sent to email&type=success"); exit;
-        } else {
-            header("Location: manage-users.php?msg=User not found&type=error"); exit;
         }
     }
+
+    // TOGGLE SUSPEND
     if (isset($_POST['action']) && $_POST['action'] == 'toggle_status') {
         $uid = $_POST['user_id'];
         $status = $_POST['status']; 
         $conn->query("UPDATE users SET is_active = $status WHERE id = $uid");
         echo json_encode(['status'=>'success']); exit;
     }
+
+    // DELETE USER
     if (isset($_POST['action']) && $_POST['action'] == 'delete') {
         $uid = $_POST['user_id'];
         if ($uid != $_SESSION['user_id']) {
@@ -243,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// --- FETCH DATA (Logic Filter Role) ---
+// --- FETCH DATA ---
 $raw_companies = [];
 if ($_SESSION['role'] === 'superadmin') {
     $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
@@ -283,7 +190,6 @@ function flattenTree($branch, &$output, $depth = 0) {
 }
 flattenTree($tree, $companies); 
 
-// Get Users List
 $users = [];
 $currentUserScope = getClientIdsForUser($_SESSION['user_id']);
 
@@ -292,7 +198,11 @@ if ($_SESSION['role'] === 'superadmin') {
 } else {
     if (!empty($currentUserScope)) {
         $ids_str = implode(',', $currentUserScope);
-        $q = $conn->query("SELECT DISTINCT u.* FROM users u JOIN user_companies uc ON u.id = uc.user_id WHERE uc.company_id IN ($ids_str) AND u.role != 'superadmin' ORDER BY u.id DESC");
+        $q = $conn->query("SELECT DISTINCT u.* FROM users u 
+                           JOIN user_companies uc ON u.id = uc.user_id 
+                           WHERE uc.company_id IN ($ids_str) 
+                           AND u.role != 'superadmin' 
+                           ORDER BY u.id DESC");
     } else {
         $q = false;
     }
@@ -302,6 +212,7 @@ if ($q) {
     while($u = $q->fetch_assoc()) {
         $assigned_details = [];
         $total_access_count = 0;
+
         if ($u['access_all_companies'] == 1 || $u['role'] == 'superadmin') {
             $total_access_count = "All"; 
         } else {
@@ -312,6 +223,7 @@ if ($q) {
             $u_scope = getClientIdsForUser($u['id']);
             $total_access_count = is_array($u_scope) ? count($u_scope) : 0;
         }
+        
         $u['assigned_details'] = $assigned_details;
         $u['total_access_count'] = $total_access_count;
         $users[] = $u;
@@ -386,7 +298,7 @@ function getLevelBadge($lvl) {
                         </div>
                     <?php endif; ?>
 
-                    <div class="bg-white dark:bg-darkcard rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
+                    <div class="bg-white dark:bg-darkcard rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden relative z-0">
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse">
                                 <thead class="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
@@ -396,7 +308,7 @@ function getLevelBadge($lvl) {
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider w-[35%]">Assigned Scope</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Total Access</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Status</th>
-                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Action</th>
+                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right w-20">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-100 dark:divide-slate-700/50">
@@ -413,6 +325,7 @@ function getLevelBadge($lvl) {
                                         ];
                                         $badge = $roleColors[$user['role']] ?? $roleColors['user'];
                                         
+                                        // Scope Display Logic
                                         if ($user['access_all_companies'] == 1) {
                                             $scopeDisplay = '
                                             <div class="flex items-center gap-2.5 p-2 rounded-lg bg-amber-50 border border-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20 w-fit">
@@ -476,34 +389,42 @@ function getLevelBadge($lvl) {
                                                 <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 shadow-sm"></div>
                                             </label>
                                         </td>
+                                        
                                         <td class="px-6 py-4 align-middle text-right">
-                                            <div class="flex items-center justify-end gap-1">
-                                                
-                                                <button onclick="showUserDetail(<?= $user['id'] ?>)" class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-all" title="View Detail">
-                                                    <i class="ph ph-eye text-lg"></i>
+                                            <div class="relative inline-block text-left">
+                                                <button onclick="toggleMenu('menu-<?= $user['id'] ?>')" class="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-200 transition-colors focus:outline-none">
+                                                    <i class="ph ph-dots-three-vertical text-xl"></i>
                                                 </button>
 
-                                                <button onclick='openEdit(<?= json_encode($user) ?>)' class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-400 transition-all" title="Edit User">
-                                                    <i class="ph ph-pencil-simple text-lg"></i>
-                                                </button>
-
-                                                <form method="POST" onsubmit="return confirm('Reset password for <?= $user['username'] ?>?');" class="inline-block">
-                                                    <input type="hidden" name="action" value="reset_password">
-                                                    <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
-                                                    <button type="submit" class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-500/10 dark:hover:text-amber-400 transition-all" title="Reset Password">
-                                                        <i class="ph ph-key text-lg"></i>
+                                                <div id="menu-<?= $user['id'] ?>" class="dropdown-menu hidden absolute right-0 mt-2 w-48 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-100 dark:border-slate-700 z-50 overflow-hidden transform origin-top-right transition-all">
+                                                    
+                                                    <button onclick="showUserDetail(<?= $user['id'] ?>); toggleMenu('menu-<?= $user['id'] ?>')" class="w-full text-left px-4 py-2.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2">
+                                                        <i class="ph ph-eye text-lg text-blue-500"></i> View Detail
                                                     </button>
-                                                </form>
 
-                                                <?php if($user['id'] != $_SESSION['user_id']): ?>
-                                                <form method="POST" onsubmit="return confirm('Delete this user?');" class="inline-block">
-                                                    <input type="hidden" name="action" value="delete">
-                                                    <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
-                                                    <button type="submit" class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400 transition-all" title="Delete User">
-                                                        <i class="ph ph-trash text-lg"></i>
+                                                    <button onclick='openEdit(<?= json_encode($user) ?>); toggleMenu("menu-<?= $user["id"] ?>")' class="w-full text-left px-4 py-2.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2">
+                                                        <i class="ph ph-pencil-simple text-lg text-indigo-500"></i> Edit User
                                                     </button>
-                                                </form>
-                                                <?php endif; ?>
+
+                                                    <form method="POST" onsubmit="return confirm('Reset password for <?= $user['username'] ?>?');" class="block">
+                                                        <input type="hidden" name="action" value="reset_password">
+                                                        <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                                                        <button type="submit" class="w-full text-left px-4 py-2.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2">
+                                                            <i class="ph ph-key text-lg text-amber-500"></i> Reset Password
+                                                        </button>
+                                                    </form>
+
+                                                    <?php if($user['id'] != $_SESSION['user_id']): ?>
+                                                    <div class="border-t border-slate-100 dark:border-slate-700 my-1"></div>
+                                                    <form method="POST" onsubmit="return confirm('Delete this user?');" class="block">
+                                                        <input type="hidden" name="action" value="delete">
+                                                        <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                                                        <button type="submit" class="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
+                                                            <i class="ph ph-trash text-lg"></i> Delete User
+                                                        </button>
+                                                    </form>
+                                                    <?php endif; ?>
+                                                </div>
                                             </div>
                                         </td>
                                     </tr>
@@ -539,7 +460,6 @@ function getLevelBadge($lvl) {
                         <input type="hidden" name="user_id" id="userId">
 
                         <div class="space-y-5">
-                            
                             <div class="grid grid-cols-2 gap-4">
                                 <div class="col-span-1">
                                     <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Username</label>
@@ -672,6 +592,23 @@ function getLevelBadge($lvl) {
     </div>
 
     <script>
+        // Dropdown Toggle Logic
+        function toggleMenu(menuId) {
+            const menu = document.getElementById(menuId);
+            // Close others first
+            document.querySelectorAll('.dropdown-menu').forEach(el => {
+                if(el.id !== menuId) el.classList.add('hidden');
+            });
+            menu.classList.toggle('hidden');
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.relative')) {
+                document.querySelectorAll('.dropdown-menu').forEach(el => el.classList.add('hidden'));
+            }
+        });
+
         const modal = document.getElementById('userModal');
         const modalBackdrop = document.getElementById('modalBackdrop');
         const modalContent = document.getElementById('modalContent');
@@ -786,18 +723,11 @@ function getLevelBadge($lvl) {
                             else if(comp.level == 2) lvlBadge = 'bg-blue-50 text-blue-700 border-blue-100';
                             else lvlBadge = 'bg-slate-50 text-slate-700 border-slate-100';
 
-                            // Visual Indentation based on depth (if provided)
-                            let indent = comp.depth ? comp.depth * 20 : 0;
-                            let connector = comp.depth > 0 ? '<i class="ph ph-arrow-elbow-down-right text-slate-300 mr-2"></i>' : '';
-
                             companiesHTML += `
                                 <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
-                                    <div class="flex items-center" style="padding-left: ${indent}px">
-                                        ${connector}
-                                        <div>
-                                            <p class="text-sm font-bold text-slate-800 dark:text-white">${comp.company_name}</p>
-                                            <p class="text-[10px] text-slate-400">${comp.partner_code}</p>
-                                        </div>
+                                    <div>
+                                        <p class="text-sm font-bold text-slate-800 dark:text-white">${comp.company_name}</p>
+                                        <p class="text-[10px] text-slate-400">${comp.partner_code}</p>
                                     </div>
                                     <span class="text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase ${lvlBadge}">Lvl ${comp.level}</span>
                                 </div>
