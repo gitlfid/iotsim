@@ -102,19 +102,21 @@ while($u = $resUsers->fetch_assoc()){ $userMap[$u['company_id']][] = $u; }
 // 2. Pre-calculate Sub-Company Counts (Recursive)
 $allComps = $conn->query("SELECT id, parent_company_id FROM companies")->fetch_all(MYSQLI_ASSOC);
 $companyChildMap = [];
+// Build map: ParentID => [ChildID, ChildID...]
 foreach($allComps as $c) {
     if($c['parent_company_id']) {
         $companyChildMap[$c['parent_company_id']][] = $c['id'];
     }
 }
 
+// Helper: Hitung total keturunan (Anak + Cucu + dst)
 if (!function_exists('countTotalSubs')) {
     function countTotalSubs($parentId, $map) {
         $count = 0;
         if (isset($map[$parentId])) {
-            $count += count($map[$parentId]); 
+            $count += count($map[$parentId]); // Anak langsung
             foreach ($map[$parentId] as $childId) {
-                $count += countTotalSubs($childId, $map); 
+                $count += countTotalSubs($childId, $map); // Rekursif ke cucu
             }
         }
         return $count;
