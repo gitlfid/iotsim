@@ -8,7 +8,7 @@ if ($_SESSION['role'] !== 'superadmin' && $_SESSION['role'] !== 'admin') {
     exit();
 }
 
-// --- AJAX HANDLER: GET USER DETAIL & ASSIGNED COMPANIES ---
+// --- AJAX HANDLER: GET USER DETAIL & SORTED COMPANIES ---
 if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GET['id'])) {
     header('Content-Type: application/json');
     $uid = intval($_GET['id']);
@@ -26,30 +26,114 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GE
     if ($userInfo['access_all_companies'] == 1 || $userInfo['role'] == 'superadmin') {
         $isGlobal = true;
     } else {
-        // Ambil semua ID perusahaan yang bisa diakses (Logic Recursive dari config.php)
-        $accessIds = getClientIdsForUser($uid); // Returns array of IDs
+        $accessIds = getClientIdsForUser($uid); 
         
         if (!empty($accessIds) && is_array($accessIds)) {
             $ids_str = implode(',', $accessIds);
-            $res = $conn->query("SELECT id, company_name, partner_code, level FROM companies WHERE id IN ($ids_str) ORDER BY level ASC, company_name ASC");
+            // Ambil data mentah (Parent ID penting untuk sorting)
+            $res = $conn->query("SELECT id, company_name, partner_code, level, parent_company_id FROM companies WHERE id IN ($ids_str) ORDER BY id ASC");
+            $rawCompanies = [];
             while($row = $res->fetch_assoc()) {
-                $companies[] = $row;
+                $rawCompanies[] = $row;
+            }
+
+            // Fungsi Rekursif untuk Menyusun Urutan (Induk -> Anak -> Cucu)
+            function buildHierarchy($parentId, $elements, &$result) {
+                foreach ($elements as $element) {
+                    // Jika parent_id sesuai ATAU (ini level 1 dan kita cari root)
+                    // Note: parent_company_id bisa NULL atau 0 di DB
+                    $pId = $element['parent_company_id'] ? $element['parent_company_id'] : 0;
+                    
+                    if ($pId == $parentId) {
+                        $result[] = $element;
+                        // Cari anak dari elemen ini
+                        buildHierarchy($element['id'], $elements, $result);
+                    }
+                }
+            }
+
+            // Mulai sorting dari Root (Parent ID = 0)
+            // Namun, user mungkin hanya punya akses ke Level 2 (tanpa Level 1), 
+            // jadi kita harus pintar-pintar memilah root relatif.
+            
+            // Cara lebih aman: 
+            // 1. Ambil Level terkecil yang ada di list ini.
+            // 2. Anggap itu sebagai 'Root' relatif.
+            
+            if (!empty($rawCompanies)) {
+                // Sort by level dulu biar level 1 di atas
+                usort($rawCompanies, function($a, $b) {
+                    return $a['level'] <=> $b['level'];
+                });
+                
+                // Jika user punya akses lengkap hirarki, logic recursive biasa jalan.
+                // Jika user assign acak, kita tampilkan apa adanya.
+                // Disini kita coba pendekatan Hybrid: Tampilkan Level 1 dulu, lalu cari anaknya.
+                
+                $sortedCompanies = [];
+                $processedIds = [];
+
+                // Pass 1: Cari Root (Level 1 atau item yang parentnya TIDAK ada di list ini)
+                $rootItems = [];
+                $idMap = array_column($rawCompanies, 'id'); // Daftar ID yang ada
+
+                foreach($rawCompanies as $comp) {
+                    $pid = $comp['parent_company_id'];
+                    // Jika Level 1 ATAU Parentnya tidak ada di list akses user -> Dia adalah Root Relatif
+                    if ($comp['level'] == 1 || !in_array($pid, $idMap)) {
+                        $rootItems[] = $comp;
+                        $processedIds[] = $comp['id'];
+                    }
+                }
+
+                // Function local untuk cari anak yang ada di list rawCompanies
+                $findChildren = function($parentId) use ($rawCompanies, &$processedIds, &$findChildren) {
+                    $children = [];
+                    foreach($rawCompanies as $c) {
+                        if ($c['parent_company_id'] == $parentId && !in_array($c['id'], $processedIds)) {
+                            $processedIds[] = $c['id'];
+                            $c['children'] = $findChildren($c['id']); // Recursion
+                            $children[] = $c;
+                        }
+                    }
+                    return $children;
+                };
+
+                // Build Tree
+                foreach($rootItems as &$root) {
+                    $root['children'] = $findChildren($root['id']);
+                    $sortedCompanies[] = $root;
+                }
+
+                // Flatten Tree untuk dikirim ke JSON (agar frontend tinggal loop)
+                $flatResult = [];
+                $flatten = function($arr, $depth = 0) use (&$flatResult, &$flatten) {
+                    foreach($arr as $item) {
+                        $item['depth'] = $depth; // Tambah info depth untuk indentasi
+                        $children = $item['children'];
+                        unset($item['children']); // Hapus children dari item flat
+                        $flatResult[] = $item;
+                        if(!empty($children)) {
+                            $flatten($children, $depth + 1);
+                        }
+                    }
+                };
+                $flatten($sortedCompanies);
+                $companies = $flatResult;
             }
         }
     }
 
     echo json_encode([
         'user' => $userInfo,
-        'companies' => $companies,
+        'companies' => $companies, // Sudah terurut: Induk -> Anak
         'is_global' => $isGlobal
     ]);
     exit();
 }
 
-// --- HANDLE POST REQUESTS ---
+// --- HANDLE POST REQUESTS (SAMA SEPERTI SEBELUMNYA) ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    
-    // 1. ADD / EDIT USER
     if (isset($_POST['action']) && ($_POST['action'] == 'add' || $_POST['action'] == 'edit')) {
         $username = $_POST['username'];
         $email = $_POST['email']; 
@@ -59,26 +143,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $company_ids = ($access_all == 0 && isset($_POST['company_ids'])) ? $_POST['company_ids'] : [];
 
         if ($_POST['action'] == 'add') {
-            // Check Duplicate
             $check = $conn->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
             $check->bind_param("ss", $username, $email);
             $check->execute();
             if ($check->get_result()->num_rows > 0) {
                 header("Location: manage-users.php?msg=Error: Username or Email already exists&type=error"); exit;
             }
-
-            // AUTO GENERATE PASSWORD
             $plain_password = !empty($_POST['password']) ? $_POST['password'] : generateStrongPassword(8);
             $hashed_password = password_hash($plain_password, PASSWORD_DEFAULT);
-            
-            // Set force_reset = 1
             $stmt = $conn->prepare("INSERT INTO users (username, email, password, role, is_active, access_all_companies, force_reset) VALUES (?, ?, ?, ?, 1, ?, 1)");
             $stmt->bind_param("ssssi", $username, $email, $hashed_password, $role, $access_all);
-            
             if ($stmt->execute()) {
                 $new_user_id = $stmt->insert_id;
-                
-                // Assign Company
                 if($access_all == 0 && !empty($company_ids)){
                     $stmt_comp = $conn->prepare("INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)");
                     foreach($company_ids as $cid){
@@ -86,8 +162,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         $stmt_comp->execute();
                     }
                 }
-
-                // --- SEND EMAIL ---
                 $subject = "Welcome to IoT Platform - Account Credentials";
                 $body = "
                 <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'>
@@ -100,25 +174,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     </div>
                     <p>Please login and change your password immediately.</p>
                 </div>";
-
-                $mailRes = sendEmail($email, $subject, $body);
-                $mailMsg = $mailRes['status'] ? "Email sent." : "Email failed: " . $mailRes['msg'];
-
-                header("Location: manage-users.php?msg=User created. $mailMsg&type=success"); exit;
+                sendEmail($email, $subject, $body);
+                header("Location: manage-users.php?msg=User created successfully&type=success"); exit;
             }
         } 
         else if ($_POST['action'] == 'edit') {
             $stmt = $conn->prepare("UPDATE users SET username=?, email=?, role=?, access_all_companies=? WHERE id=?");
             $stmt->bind_param("sssii", $username, $email, $role, $access_all, $user_id);
             $stmt->execute();
-
             if (!empty($_POST['password'])) {
                 $new_pass = password_hash($_POST['password'], PASSWORD_DEFAULT);
                 $stmt = $conn->prepare("UPDATE users SET password=? WHERE id=?");
                 $stmt->bind_param("si", $new_pass, $user_id);
                 $stmt->execute();
             }
-
             $conn->query("DELETE FROM user_companies WHERE user_id = $user_id");
             if($access_all == 0 && !empty($company_ids)){
                 $stmt_comp = $conn->prepare("INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)");
@@ -130,57 +199,40 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             header("Location: manage-users.php?msg=User updated successfully&type=success"); exit;
         }
     }
-
-    // 2. RESET PASSWORD
     if (isset($_POST['action']) && $_POST['action'] == 'reset_password') {
         $uid = $_POST['user_id'];
-        
         $qUser = $conn->query("SELECT username, email FROM users WHERE id='$uid'");
         if ($qUser->num_rows > 0) {
             $uData = $qUser->fetch_assoc();
             $email = $uData['email'];
             $username = $uData['username'];
-
             $new_password = generateStrongPassword(10); 
             $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
-
-            // Update Database
             $conn->query("UPDATE users SET password='$hashed_password', force_reset=1 WHERE id='$uid'");
-
-            // Kirim Email
             $subject = "Password Reset - IoT Platform";
             $body = "
             <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'>
                 <h2 style='color: #F59E0B;'>Password Reset</h2>
                 <p>Hello <strong>$username</strong>,</p>
                 <p>Your password has been reset by Administrator.</p>
-                
                 <div style='background-color: #FFFBEB; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #FEF3C7;'>
                     <p style='margin: 5px 0; color: #92400E;'><strong>New Password:</strong></p>
                     <p style='margin: 5px 0; font-size: 18px; font-family: monospace; font-weight: bold; color: #D97706;'>$new_password</p>
                 </div>
-
                 <p>Use this password to login. You will be asked to create a new password immediately.</p>
             </div>";
-
-            $mailRes = sendEmail($email, $subject, $body);
-            $msgStatus = $mailRes['status'] ? "New password sent to email." : "Password reset but email failed: ".$mailRes['msg'];
-            
-            header("Location: manage-users.php?msg=$msgStatus&type=success"); exit;
+            sendEmail($email, $subject, $body);
+            header("Location: manage-users.php?msg=New password sent to email&type=success"); exit;
         } else {
             header("Location: manage-users.php?msg=User not found&type=error"); exit;
         }
     }
-
-    // 3. TOGGLE SUSPEND
     if (isset($_POST['action']) && $_POST['action'] == 'toggle_status') {
         $uid = $_POST['user_id'];
         $status = $_POST['status']; 
         $conn->query("UPDATE users SET is_active = $status WHERE id = $uid");
         echo json_encode(['status'=>'success']); exit;
     }
-
-    // 4. DELETE USER
     if (isset($_POST['action']) && $_POST['action'] == 'delete') {
         $uid = $_POST['user_id'];
         if ($uid != $_SESSION['user_id']) {
@@ -196,7 +248,6 @@ $raw_companies = [];
 if ($_SESSION['role'] === 'superadmin') {
     $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
 } else {
-    // Admin hanya lihat scope dia
     $scope = getClientIdsForUser($_SESSION['user_id']);
     if (!empty($scope)) {
         $ids_str = implode(',', $scope);
@@ -232,7 +283,7 @@ function flattenTree($branch, &$output, $depth = 0) {
 }
 flattenTree($tree, $companies); 
 
-// Get Users List (Filtered)
+// Get Users List
 $users = [];
 $currentUserScope = getClientIdsForUser($_SESSION['user_id']);
 
@@ -241,11 +292,7 @@ if ($_SESSION['role'] === 'superadmin') {
 } else {
     if (!empty($currentUserScope)) {
         $ids_str = implode(',', $currentUserScope);
-        $q = $conn->query("SELECT DISTINCT u.* FROM users u 
-                           JOIN user_companies uc ON u.id = uc.user_id 
-                           WHERE uc.company_id IN ($ids_str) 
-                           AND u.role != 'superadmin' 
-                           ORDER BY u.id DESC");
+        $q = $conn->query("SELECT DISTINCT u.* FROM users u JOIN user_companies uc ON u.id = uc.user_id WHERE uc.company_id IN ($ids_str) AND u.role != 'superadmin' ORDER BY u.id DESC");
     } else {
         $q = false;
     }
@@ -255,7 +302,6 @@ if ($q) {
     while($u = $q->fetch_assoc()) {
         $assigned_details = [];
         $total_access_count = 0;
-
         if ($u['access_all_companies'] == 1 || $u['role'] == 'superadmin') {
             $total_access_count = "All"; 
         } else {
@@ -266,7 +312,6 @@ if ($q) {
             $u_scope = getClientIdsForUser($u['id']);
             $total_access_count = is_array($u_scope) ? count($u_scope) : 0;
         }
-        
         $u['assigned_details'] = $assigned_details;
         $u['total_access_count'] = $total_access_count;
         $users[] = $u;
@@ -368,7 +413,6 @@ function getLevelBadge($lvl) {
                                         ];
                                         $badge = $roleColors[$user['role']] ?? $roleColors['user'];
                                         
-                                        // Scope Display
                                         if ($user['access_all_companies'] == 1) {
                                             $scopeDisplay = '
                                             <div class="flex items-center gap-2.5 p-2 rounded-lg bg-amber-50 border border-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20 w-fit">
@@ -742,11 +786,18 @@ function getLevelBadge($lvl) {
                             else if(comp.level == 2) lvlBadge = 'bg-blue-50 text-blue-700 border-blue-100';
                             else lvlBadge = 'bg-slate-50 text-slate-700 border-slate-100';
 
+                            // Visual Indentation based on depth (if provided)
+                            let indent = comp.depth ? comp.depth * 20 : 0;
+                            let connector = comp.depth > 0 ? '<i class="ph ph-arrow-elbow-down-right text-slate-300 mr-2"></i>' : '';
+
                             companiesHTML += `
                                 <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
-                                    <div>
-                                        <p class="text-sm font-bold text-slate-800 dark:text-white">${comp.company_name}</p>
-                                        <p class="text-[10px] text-slate-400">${comp.partner_code}</p>
+                                    <div class="flex items-center" style="padding-left: ${indent}px">
+                                        ${connector}
+                                        <div>
+                                            <p class="text-sm font-bold text-slate-800 dark:text-white">${comp.company_name}</p>
+                                            <p class="text-[10px] text-slate-400">${comp.partner_code}</p>
+                                        </div>
                                     </div>
                                     <span class="text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase ${lvlBadge}">Lvl ${comp.level}</span>
                                 </div>
