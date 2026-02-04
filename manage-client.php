@@ -42,6 +42,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
     $name = $_POST['company_name'];
     $code = $_POST['partner_code'];
     
+    // FIX: Set default value untuk project_name agar tidak error di database
+    $project_name = "-"; 
+    
     // PIC Data
     $pic_name = $_POST['pic_name'] ?? '';
     $pic_email = $_POST['pic_email'] ?? '';
@@ -57,8 +60,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
         $level = 1; 
     }
     
-    $stmt = $conn->prepare("INSERT INTO companies (company_name, partner_code, level, parent_company_id, pic_name, pic_email, pic_phone) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("ssiisss", $name, $code, $level, $parent_id, $pic_name, $pic_email, $pic_phone);
+    // Update Query: Tambahkan project_name ke dalam INSERT
+    $stmt = $conn->prepare("INSERT INTO companies (company_name, partner_code, level, parent_company_id, pic_name, pic_email, pic_phone, project_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("ssiissss", $name, $code, $level, $parent_id, $pic_name, $pic_email, $pic_phone, $project_name);
     
     if($stmt->execute()) {
         header("Location: manage-client.php?msg=added"); exit();
