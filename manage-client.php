@@ -13,8 +13,11 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id
     header('Content-Type: application/json');
     $cid = intval($_GET['id']);
     
-    // 1. Get Company Info
-    $sql = "SELECT * FROM companies WHERE id = $cid";
+    // 1. Get Company Info + Parent Name
+    $sql = "SELECT c.*, p.company_name as parent_name 
+            FROM companies c 
+            LEFT JOIN companies p ON c.parent_company_id = p.id 
+            WHERE c.id = $cid";
     $info = $conn->query($sql)->fetch_assoc();
 
     // 2. Get Recursive Children
@@ -73,6 +76,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
     
     if($stmt->execute()) {
         header("Location: manage-client.php?msg=added"); exit();
+    }
+}
+
+// --- HANDLE EDIT PIC (SUPERADMIN ONLY) ---
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['edit_company_pic'])) {
+    if ($_SESSION['role'] === 'superadmin') {
+        $id = $_POST['edit_id'];
+        $pic_name = $_POST['edit_pic_name'];
+        $pic_email = $_POST['edit_pic_email'];
+        $pic_phone = $_POST['edit_pic_phone'];
+        
+        $stmt = $conn->prepare("UPDATE companies SET pic_name=?, pic_email=?, pic_phone=? WHERE id=?");
+        $stmt->bind_param("sssi", $pic_name, $pic_email, $pic_phone, $id);
+        
+        if($stmt->execute()) {
+            header("Location: manage-client.php?msg=updated"); exit();
+        }
+    } else {
+        echo "<script>alert('Unauthorized action.'); window.location='manage-client.php';</script>";
+        exit();
     }
 }
 
@@ -136,6 +159,7 @@ $result = $conn->query($sql);
     </script>
     <style>
         .modal-anim { transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+        .hidden-row { display: none !important; }
         .custom-scroll::-webkit-scrollbar { width: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: transparent; }
         .custom-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
@@ -145,11 +169,9 @@ $result = $conn->query($sql);
 <body class="bg-[#F8FAFC] dark:bg-darkbg text-slate-600 dark:text-slate-300 font-sans antialiased">
     
     <div class="flex h-screen">
-        
         <?php include 'includes/sidebar.php'; ?>
         
         <div class="flex-1 flex flex-col overflow-hidden">
-            
             <?php include 'includes/header.php'; ?>
             
             <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
@@ -166,14 +188,16 @@ $result = $conn->query($sql);
                         </button>
                     </div>
 
-                    <?php if(isset($_GET['msg'])): ?>
+                    <?php if(isset($_GET['msg'])): 
+                        $msgType = ($_GET['msg'] == 'updated') ? 'updated successfully' : 'completed successfully';
+                    ?>
                         <div class="mb-6 p-4 rounded-xl border flex items-center gap-3 bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800 animate-fade-in-up">
                             <div class="p-2 bg-white dark:bg-darkcard rounded-full shadow-sm"><i class="ph ph-check-circle text-xl"></i></div>
-                            <span class="font-medium text-sm">Operation completed successfully.</span>
+                            <span class="font-medium text-sm">Operation <?= $msgType ?>.</span>
                         </div>
                     <?php endif; ?>
 
-                    <div class="bg-white dark:bg-darkcard rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
+                    <div class="bg-white dark:bg-darkcard rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden relative z-0">
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse" id="clientTable">
                                 <thead class="bg-slate-50/80 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 backdrop-blur-sm">
@@ -361,7 +385,7 @@ $result = $conn->query($sql);
                 <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50 rounded-t-2xl">
                     <div>
                         <h3 class="text-lg font-bold text-slate-800 dark:text-white">Company Structure</h3>
-                        <p class="text-xs text-slate-500">Managing hierarchy & subsidiaries.</p>
+                        <p class="text-xs text-slate-500">Managing hierarchy & contact information.</p>
                     </div>
                     <button onclick="closeDetail()" class="w-8 h-8 flex items-center justify-center rounded-full bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-600 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors">
                         <i class="ph ph-x text-lg"></i>
@@ -377,6 +401,8 @@ $result = $conn->query($sql);
             </div>
         </div>
     </div>
+
+    <script>const currentUserRole = '<?= $_SESSION['role'] ?>';</script>
 
     <script>
         const modal = document.getElementById('companyModal');
@@ -433,6 +459,7 @@ $result = $conn->query($sql);
             fetch(`manage-client.php?action=get_detail&id=${id}`)
                 .then(response => response.json())
                 .then(data => {
+                    // Logic Recursive Children
                     let childrenHTML = '';
                     if(data.children.length > 0) {
                         data.children.forEach(child => {
@@ -460,18 +487,99 @@ $result = $conn->query($sql);
                         childrenHTML = '<div class="text-center py-4 text-slate-400 text-sm italic">No sub-companies found.</div>';
                     }
 
-                    detailBody.innerHTML = `
-                        <div class="mb-6 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 relative overflow-hidden">
-                            <div class="absolute top-0 right-0 p-4 opacity-10"><i class="ph ph-buildings text-6xl text-indigo-500"></i></div>
-                            <div class="flex justify-between items-start mb-4 relative z-10">
-                                <div><h2 class="text-xl font-bold text-slate-800 dark:text-white">${data.info.company_name}</h2><span class="text-xs font-mono bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-500 border border-slate-200 dark:border-slate-600 mt-1 inline-block">${data.info.partner_code}</span></div>
-                                <span class="px-2 py-1 bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs font-bold rounded">Level ${data.info.level}</span>
+                    // Show Parent Info if exists
+                    let parentInfo = '';
+                    if(data.info.parent_name) {
+                        parentInfo = `
+                        <div class="mb-4 p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg flex items-center gap-2">
+                            <i class="ph ph-arrow-elbow-up-left text-slate-400"></i>
+                            <span class="text-xs text-slate-500">Parent: <strong>${data.info.parent_name}</strong></span>
+                        </div>`;
+                    }
+
+                    // PIC Display vs Edit Mode (Conditional)
+                    let picSection = `
+                        <div id="picDisplay">
+                            <div class="flex justify-between items-center mb-3 border-b border-slate-100 dark:border-slate-700 pb-2">
+                                <h4 class="text-xs font-bold uppercase text-slate-400">PIC Information</h4>
+                                ${currentUserRole === 'superadmin' ? `<button onclick="toggleEditMode()" class="text-xs flex items-center gap-1 text-indigo-600 font-bold hover:underline"><i class="ph ph-pencil-simple"></i> Edit</button>` : ''}
                             </div>
-                            <div class="grid grid-cols-2 gap-4 text-sm relative z-10">
-                                <div><p class="text-xs text-slate-400 font-bold uppercase mb-1">Total SIMs</p><p class="font-bold text-slate-700 dark:text-white">${data.sims.total}</p></div>
-                                <div><p class="text-xs text-slate-400 font-bold uppercase mb-1">PIC Contact</p><p class="text-slate-700 dark:text-white truncate">${data.info.pic_name || '-'}</p><p class="text-xs text-slate-500">${data.info.pic_email || ''}</p></div>
+                            <div class="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                    <p class="text-xs text-slate-400 font-bold uppercase mb-1">Name</p>
+                                    <p class="text-slate-700 dark:text-white truncate font-medium">${data.info.pic_name || '-'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-xs text-slate-400 font-bold uppercase mb-1">Email</p>
+                                    <p class="text-slate-700 dark:text-white truncate">${data.info.pic_email || '-'}</p>
+                                </div>
+                                <div class="col-span-2">
+                                    <p class="text-xs text-slate-400 font-bold uppercase mb-1">Phone</p>
+                                    <p class="text-slate-700 dark:text-white font-mono">${data.info.pic_phone || '-'}</p>
+                                </div>
                             </div>
                         </div>
+
+                        <form id="picEditForm" method="POST" class="hidden">
+                            <input type="hidden" name="edit_company_pic" value="1">
+                            <input type="hidden" name="edit_id" value="${data.info.id}">
+                            
+                            <div class="flex justify-between items-center mb-3 border-b border-slate-100 dark:border-slate-700 pb-2">
+                                <h4 class="text-xs font-bold uppercase text-indigo-600">Editing Contact</h4>
+                                <button type="button" onclick="toggleEditMode()" class="text-xs text-slate-400 hover:text-slate-600">Cancel</button>
+                            </div>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Name</label>
+                                    <input type="text" name="edit_pic_name" value="${data.info.pic_name || ''}" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none">
+                                </div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Email</label>
+                                        <input type="email" name="edit_pic_email" value="${data.info.pic_email || ''}" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Phone</label>
+                                        <input type="text" name="edit_pic_phone" value="${data.info.pic_phone || ''}" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none">
+                                    </div>
+                                </div>
+                                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg text-sm font-bold shadow-sm transition-colors mt-2">Save Changes</button>
+                            </div>
+                        </form>
+                    `;
+
+                    detailBody.innerHTML = `
+                        <div class="mb-6">
+                            <div class="flex justify-between items-start mb-2">
+                                <div>
+                                    <h2 class="text-2xl font-bold text-slate-800 dark:text-white">${data.info.company_name}</h2>
+                                    <div class="flex items-center gap-2 mt-1">
+                                        <span class="text-xs font-mono bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-500 border border-slate-200 dark:border-slate-600">${data.info.partner_code}</span>
+                                        <span class="px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 text-[10px] font-bold rounded uppercase">Level ${data.info.level}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            ${parentInfo}
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                            <div class="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-700">
+                                <h4 class="text-xs font-bold uppercase text-slate-400 mb-3 border-b border-slate-200 dark:border-slate-700 pb-2">Operational</h4>
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="text-sm text-slate-600 dark:text-slate-300">Total SIMs</span>
+                                    <span class="font-bold text-slate-800 dark:text-white">${data.sims.total}</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-sm text-emerald-600">Active</span>
+                                    <span class="font-bold text-emerald-600">${data.sims.active}</span>
+                                </div>
+                            </div>
+
+                            <div class="p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                                ${picSection}
+                            </div>
+                        </div>
+
                         <div>
                             <div class="flex justify-between items-center mb-3">
                                 <h4 class="text-xs font-bold uppercase text-slate-400">Subsidiaries / Branches</h4>
@@ -483,6 +591,19 @@ $result = $conn->query($sql);
                 .catch(err => {
                     detailBody.innerHTML = '<p class="text-red-500 text-center py-4">Failed to load details.</p>';
                 });
+        }
+
+        function toggleEditMode() {
+            const displayDiv = document.getElementById('picDisplay');
+            const editForm = document.getElementById('picEditForm');
+            
+            if (displayDiv.classList.contains('hidden')) {
+                displayDiv.classList.remove('hidden');
+                editForm.classList.add('hidden');
+            } else {
+                displayDiv.classList.add('hidden');
+                editForm.classList.remove('hidden');
+            }
         }
 
         function closeDetail() {
