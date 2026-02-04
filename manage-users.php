@@ -2,20 +2,48 @@
 include 'config.php';
 checkLogin();
 
-// --- ACCESS CONTROL LEVEL 1: Halaman ini hanya untuk Superadmin & Admin ---
+// Access Control
 if ($_SESSION['role'] !== 'superadmin' && $_SESSION['role'] !== 'admin') {
     echo "<script>alert('Access Denied'); window.location='dashboard.php';</script>";
     exit();
 }
 
-// Helper: Ambil Scope Perusahaan User yang Sedang Login
-$currentUserScope = [];
-if ($_SESSION['role'] !== 'superadmin') {
-    $currentUserScope = getClientIdsForUser($_SESSION['user_id']); // Mengembalikan Array ID atau 'ALL'
-    // Jika user admin tapi tidak punya company, dia tidak bisa lihat apa-apa
-    if (empty($currentUserScope) || $currentUserScope === 'NONE') {
-        $currentUserScope = []; 
+// --- AJAX HANDLER: GET USER DETAIL & ASSIGNED COMPANIES ---
+if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GET['id'])) {
+    header('Content-Type: application/json');
+    $uid = intval($_GET['id']);
+    
+    // 1. Get User Info
+    $stmt = $conn->prepare("SELECT id, username, email, role, is_active, access_all_companies FROM users WHERE id = ?");
+    $stmt->bind_param("i", $uid);
+    $stmt->execute();
+    $userInfo = $stmt->get_result()->fetch_assoc();
+
+    // 2. Get Accessible Companies
+    $companies = [];
+    $isGlobal = false;
+
+    if ($userInfo['access_all_companies'] == 1 || $userInfo['role'] == 'superadmin') {
+        $isGlobal = true;
+    } else {
+        // Ambil semua ID perusahaan yang bisa diakses (Logic Recursive dari config.php)
+        $accessIds = getClientIdsForUser($uid); // Returns array of IDs
+        
+        if (!empty($accessIds) && is_array($accessIds)) {
+            $ids_str = implode(',', $accessIds);
+            $res = $conn->query("SELECT id, company_name, partner_code, level FROM companies WHERE id IN ($ids_str) ORDER BY level ASC, company_name ASC");
+            while($row = $res->fetch_assoc()) {
+                $companies[] = $row;
+            }
+        }
     }
+
+    echo json_encode([
+        'user' => $userInfo,
+        'companies' => $companies,
+        'is_global' => $isGlobal
+    ]);
+    exit();
 }
 
 // --- HANDLE POST REQUESTS ---
@@ -27,28 +55,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $email = $_POST['email']; 
         $role = $_POST['role'];
         $user_id = isset($_POST['user_id']) ? $_POST['user_id'] : null;
-        
-        // Security: Admin tidak boleh bikin Superadmin
-        if ($_SESSION['role'] !== 'superadmin' && $role === 'superadmin') {
-            header("Location: manage-users.php?msg=Error: Unauthorized role creation&type=error"); exit;
-        }
-
-        // Security: Hanya Superadmin boleh set Global Access
-        $access_all = (isset($_POST['access_all']) && $_SESSION['role'] === 'superadmin') ? 1 : 0;
-        
-        // Ambil Company IDs dari form
+        $access_all = isset($_POST['access_all']) ? 1 : 0;
         $company_ids = ($access_all == 0 && isset($_POST['company_ids'])) ? $_POST['company_ids'] : [];
-
-        // Security: Admin hanya boleh assign ke company miliknya
-        if ($_SESSION['role'] !== 'superadmin') {
-            // Filter company_ids agar hanya berisi ID yang diizinkan untuk Admin ini
-            $company_ids = array_intersect($company_ids, $currentUserScope);
-            
-            // Jika admin mencoba membuat user tanpa company (atau company di luar haknya)
-            if (empty($company_ids) && $access_all == 0) {
-                header("Location: manage-users.php?msg=Error: You must assign at least one valid company&type=error"); exit;
-            }
-        }
 
         if ($_POST['action'] == 'add') {
             // Check Duplicate
@@ -89,7 +97,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         <p style='margin: 5px 0;'><strong>Username:</strong> $username</p>
                         <p style='margin: 5px 0;'><strong>Email:</strong> $email</p>
                         <p style='margin: 5px 0;'><strong>Password:</strong> <span style='font-family: monospace; background: #e0e7ff; color: #4338ca; padding: 2px 6px; rounded: 4px;'>$plain_password</span></p>
-                        <p style='margin: 5px 0;'><strong>Role:</strong> ".ucfirst($role)."</p>
                     </div>
                     <p>Please login and change your password immediately.</p>
                 </div>";
@@ -101,9 +108,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
         } 
         else if ($_POST['action'] == 'edit') {
-            // Security: Admin tidak boleh edit Superadmin atau user di luar scope
-            // (Validasi tambahan bisa ditaruh disini, tapi query list user di bawah sudah membatasi tampilan)
-
             $stmt = $conn->prepare("UPDATE users SET username=?, email=?, role=?, access_all_companies=? WHERE id=?");
             $stmt->bind_param("sssii", $username, $email, $role, $access_all, $user_id);
             $stmt->execute();
@@ -140,18 +144,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $new_password = generateStrongPassword(10); 
             $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
 
+            // Update Database
             $conn->query("UPDATE users SET password='$hashed_password', force_reset=1 WHERE id='$uid'");
 
+            // Kirim Email
             $subject = "Password Reset - IoT Platform";
             $body = "
             <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'>
                 <h2 style='color: #F59E0B;'>Password Reset</h2>
                 <p>Hello <strong>$username</strong>,</p>
                 <p>Your password has been reset by Administrator.</p>
+                
                 <div style='background-color: #FFFBEB; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #FEF3C7;'>
                     <p style='margin: 5px 0; color: #92400E;'><strong>New Password:</strong></p>
                     <p style='margin: 5px 0; font-size: 18px; font-family: monospace; font-weight: bold; color: #D97706;'>$new_password</p>
                 </div>
+
                 <p>Use this password to login. You will be asked to create a new password immediately.</p>
             </div>";
 
@@ -183,20 +191,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// --- FETCH DATA (LOGIC FILTER ROLE) ---
-
-// 1. Fetch Companies Tree (Filtered by Scope)
+// --- FETCH DATA (Logic Filter Role) ---
 $raw_companies = [];
 if ($_SESSION['role'] === 'superadmin') {
-    // Superadmin lihat semua company
     $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
 } else {
-    // Admin hanya lihat company miliknya & turunannya
-    if (!empty($currentUserScope)) {
-        $ids_str = implode(',', $currentUserScope);
+    // Admin hanya lihat scope dia
+    $scope = getClientIdsForUser($_SESSION['user_id']);
+    if (!empty($scope)) {
+        $ids_str = implode(',', $scope);
         $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies WHERE id IN ($ids_str) ORDER BY company_name ASC");
     } else {
-        $res = false; // No companies available
+        $res = false;
     }
 }
 
@@ -208,7 +214,6 @@ if ($res) {
 }
 
 $tree = [];
-// Build tree from flat array
 foreach ($raw_companies as $id => &$node) {
     if ($node['parent_id'] && isset($raw_companies[$node['parent_id']])) {
         $raw_companies[$node['parent_id']]['children'][] = &$node;
@@ -227,18 +232,15 @@ function flattenTree($branch, &$output, $depth = 0) {
 }
 flattenTree($tree, $companies); 
 
-// 2. Fetch Users List (Filtered by Role)
+// Get Users List (Filtered)
 $users = [];
+$currentUserScope = getClientIdsForUser($_SESSION['user_id']);
 
 if ($_SESSION['role'] === 'superadmin') {
-    // Superadmin: Lihat SEMUA user
     $q = $conn->query("SELECT * FROM users ORDER BY id DESC");
 } else {
-    // Admin: Lihat user yang terhubung dengan company scope dia
     if (!empty($currentUserScope)) {
         $ids_str = implode(',', $currentUserScope);
-        // Query untuk ambil user yang punya relasi dengan company di scope admin
-        // DAN user tersebut BUKAN superadmin
         $q = $conn->query("SELECT DISTINCT u.* FROM users u 
                            JOIN user_companies uc ON u.id = uc.user_id 
                            WHERE uc.company_id IN ($ids_str) 
@@ -259,10 +261,8 @@ if ($q) {
         } else {
             $uc = $conn->query("SELECT c.id, c.company_name, c.level FROM user_companies uc JOIN companies c ON uc.company_id = c.id WHERE uc.user_id = " . $u['id'] . " ORDER BY c.level ASC");
             while($c = $uc->fetch_assoc()) {
-                $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level'], 'id' => $c['id']]; // Need ID for edit mapping
+                $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level'], 'id' => $c['id']];
             }
-            
-            // Hitung total akses (termasuk turunan) untuk user ini
             $u_scope = getClientIdsForUser($u['id']);
             $total_access_count = is_array($u_scope) ? count($u_scope) : 0;
         }
@@ -305,6 +305,10 @@ function getLevelBadge($lvl) {
         .dark .comp-check:checked + div { background-color: #312E81; border-color: #6366F1; }
         .list-disabled { opacity: 0.5; pointer-events: none; filter: grayscale(1); }
         .modal-anim { transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
+        .dark .custom-scroll::-webkit-scrollbar-thumb { background-color: #475569; }
     </style>
 </head>
 <body class="bg-[#F8FAFC] dark:bg-darkbg text-slate-600 dark:text-slate-300 font-sans antialiased">
@@ -431,6 +435,10 @@ function getLevelBadge($lvl) {
                                         <td class="px-6 py-4 align-middle text-right">
                                             <div class="flex items-center justify-end gap-1">
                                                 
+                                                <button onclick="showUserDetail(<?= $user['id'] ?>)" class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-all" title="View Detail">
+                                                    <i class="ph ph-eye text-lg"></i>
+                                                </button>
+
                                                 <button onclick='openEdit(<?= json_encode($user) ?>)' class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-400 transition-all" title="Edit User">
                                                     <i class="ph ph-pencil-simple text-lg"></i>
                                                 </button>
@@ -468,7 +476,6 @@ function getLevelBadge($lvl) {
 
     <div id="userModal" class="fixed inset-0 z-50 hidden">
         <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity opacity-0" id="modalBackdrop" onclick="closeModal()"></div>
-        
         <div class="flex items-center justify-center min-h-screen p-4">
             <div class="bg-white dark:bg-darkcard w-full max-w-lg rounded-2xl shadow-2xl transform transition-all scale-95 opacity-0 modal-anim flex flex-col max-h-[90vh] relative z-10" id="modalContent">
                 
@@ -594,6 +601,32 @@ function getLevelBadge($lvl) {
         </div>
     </div>
 
+    <div id="userDetailModal" class="fixed inset-0 z-50 hidden">
+        <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity opacity-0" id="detailBackdrop" onclick="closeUserDetail()"></div>
+        
+        <div class="flex items-center justify-center min-h-screen p-4">
+            <div class="bg-white dark:bg-darkcard w-full max-w-lg rounded-2xl shadow-2xl transform transition-all scale-95 opacity-0 modal-anim flex flex-col max-h-[90vh] relative z-10" id="detailContent">
+                
+                <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50 rounded-t-2xl">
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-800 dark:text-white">User Details</h3>
+                        <p class="text-xs text-slate-500">Overview of user access and profile.</p>
+                    </div>
+                    <button onclick="closeUserDetail()" class="w-8 h-8 flex items-center justify-center rounded-full bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-600 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors">
+                        <i class="ph ph-x text-lg"></i>
+                    </button>
+                </div>
+
+                <div class="flex-1 overflow-y-auto custom-scroll p-6" id="userDetailBody">
+                    <div class="flex flex-col items-center justify-center py-12 text-slate-400">
+                        <i class="ph ph-spinner animate-spin text-3xl mb-2 text-primary"></i>
+                        <span class="text-sm">Fetching user data...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const modal = document.getElementById('userModal');
         const modalBackdrop = document.getElementById('modalBackdrop');
@@ -611,6 +644,7 @@ function getLevelBadge($lvl) {
 
         function openModal(mode) {
             modal.classList.remove('hidden');
+            // Animasi Masuk
             setTimeout(() => {
                 modalBackdrop.classList.remove('opacity-0');
                 modalContent.classList.remove('scale-95', 'opacity-0');
@@ -670,6 +704,96 @@ function getLevelBadge($lvl) {
             fd.append('user_id', userId);
             fd.append('status', status);
             fetch('manage-users.php', { method: 'POST', body: fd });
+        }
+
+        // --- USER DETAIL MODAL LOGIC ---
+        const userDetailModal = document.getElementById('userDetailModal');
+        const detailBackdrop = document.getElementById('detailBackdrop');
+        const detailContent = document.getElementById('detailContent');
+        const userDetailBody = document.getElementById('userDetailBody');
+
+        function showUserDetail(id) {
+            userDetailModal.classList.remove('hidden');
+            setTimeout(() => {
+                detailBackdrop.classList.remove('opacity-0');
+                detailContent.classList.remove('scale-95', 'opacity-0');
+                detailContent.classList.add('scale-100', 'opacity-100');
+            }, 10);
+
+            // Fetch Data
+            fetch(`manage-users.php?action=get_user_detail&id=${id}`)
+                .then(response => response.json())
+                .then(data => {
+                    let companiesHTML = '';
+                    
+                    if (data.is_global) {
+                        companiesHTML = `
+                            <div class="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800 rounded-xl text-center">
+                                <i class="ph ph-globe-hemisphere-west text-3xl text-amber-600 mb-2 block"></i>
+                                <span class="text-sm font-bold text-amber-800 dark:text-amber-500">Global Access</span>
+                                <p class="text-xs text-amber-600/80 mt-1">This user has access to all companies in the system.</p>
+                            </div>
+                        `;
+                    } else if (data.companies.length > 0) {
+                        companiesHTML = '<div class="space-y-2">';
+                        data.companies.forEach(comp => {
+                            let lvlBadge = '';
+                            if(comp.level == 1) lvlBadge = 'bg-indigo-50 text-indigo-700 border-indigo-100';
+                            else if(comp.level == 2) lvlBadge = 'bg-blue-50 text-blue-700 border-blue-100';
+                            else lvlBadge = 'bg-slate-50 text-slate-700 border-slate-100';
+
+                            companiesHTML += `
+                                <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
+                                    <div>
+                                        <p class="text-sm font-bold text-slate-800 dark:text-white">${comp.company_name}</p>
+                                        <p class="text-[10px] text-slate-400">${comp.partner_code}</p>
+                                    </div>
+                                    <span class="text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase ${lvlBadge}">Lvl ${comp.level}</span>
+                                </div>
+                            `;
+                        });
+                        companiesHTML += '</div>';
+                    } else {
+                        companiesHTML = '<div class="text-center py-6 text-slate-400 text-sm italic">No assigned companies found.</div>';
+                    }
+
+                    // Render Detail
+                    userDetailBody.innerHTML = `
+                        <div class="mb-6 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-4">
+                            <div class="w-14 h-14 rounded-xl bg-gradient-to-br from-indigo-50 to-slate-100 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center text-primary font-bold text-xl shadow-inner">
+                                ${data.user.username.substring(0,2).toUpperCase()}
+                            </div>
+                            <div>
+                                <h2 class="text-lg font-bold text-slate-800 dark:text-white">${data.user.username}</h2>
+                                <p class="text-sm text-slate-500 dark:text-slate-400">${data.user.email}</p>
+                                <div class="flex items-center gap-2 mt-2">
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 border border-slate-200 text-slate-600">${data.user.role}</span>
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase ${data.user.is_active == 1 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}">${data.user.is_active == 1 ? 'Active' : 'Suspended'}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between items-center mb-3">
+                                <h4 class="text-xs font-bold uppercase text-slate-400">Accessible Companies</h4>
+                                <span class="text-xs bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-500 font-mono">${data.is_global ? 'ALL' : data.companies.length}</span>
+                            </div>
+                            <div class="max-h-64 overflow-y-auto custom-scroll pr-1">
+                                ${companiesHTML}
+                            </div>
+                        </div>
+                    `;
+                })
+                .catch(err => {
+                    userDetailBody.innerHTML = '<p class="text-red-500 text-center py-4">Failed to load details.</p>';
+                });
+        }
+
+        function closeUserDetail() {
+            detailBackdrop.classList.add('opacity-0');
+            detailContent.classList.remove('scale-100', 'opacity-100');
+            detailContent.classList.add('scale-95', 'opacity-0');
+            setTimeout(() => { detailModal.classList.add('hidden'); }, 300);
         }
     </script>
 </body>
