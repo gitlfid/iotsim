@@ -2,10 +2,20 @@
 include 'config.php';
 checkLogin();
 
-// Access Control
+// --- ACCESS CONTROL LEVEL 1: Halaman ini hanya untuk Superadmin & Admin ---
 if ($_SESSION['role'] !== 'superadmin' && $_SESSION['role'] !== 'admin') {
     echo "<script>alert('Access Denied'); window.location='dashboard.php';</script>";
     exit();
+}
+
+// Helper: Ambil Scope Perusahaan User yang Sedang Login
+$currentUserScope = [];
+if ($_SESSION['role'] !== 'superadmin') {
+    $currentUserScope = getClientIdsForUser($_SESSION['user_id']); // Mengembalikan Array ID atau 'ALL'
+    // Jika user admin tapi tidak punya company, dia tidak bisa lihat apa-apa
+    if (empty($currentUserScope) || $currentUserScope === 'NONE') {
+        $currentUserScope = []; 
+    }
 }
 
 // --- HANDLE POST REQUESTS ---
@@ -17,8 +27,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $email = $_POST['email']; 
         $role = $_POST['role'];
         $user_id = isset($_POST['user_id']) ? $_POST['user_id'] : null;
-        $access_all = isset($_POST['access_all']) ? 1 : 0;
+        
+        // Security: Admin tidak boleh bikin Superadmin
+        if ($_SESSION['role'] !== 'superadmin' && $role === 'superadmin') {
+            header("Location: manage-users.php?msg=Error: Unauthorized role creation&type=error"); exit;
+        }
+
+        // Security: Hanya Superadmin boleh set Global Access
+        $access_all = (isset($_POST['access_all']) && $_SESSION['role'] === 'superadmin') ? 1 : 0;
+        
+        // Ambil Company IDs dari form
         $company_ids = ($access_all == 0 && isset($_POST['company_ids'])) ? $_POST['company_ids'] : [];
+
+        // Security: Admin hanya boleh assign ke company miliknya
+        if ($_SESSION['role'] !== 'superadmin') {
+            // Filter company_ids agar hanya berisi ID yang diizinkan untuk Admin ini
+            $company_ids = array_intersect($company_ids, $currentUserScope);
+            
+            // Jika admin mencoba membuat user tanpa company (atau company di luar haknya)
+            if (empty($company_ids) && $access_all == 0) {
+                header("Location: manage-users.php?msg=Error: You must assign at least one valid company&type=error"); exit;
+            }
+        }
 
         if ($_POST['action'] == 'add') {
             // Check Duplicate
@@ -59,6 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         <p style='margin: 5px 0;'><strong>Username:</strong> $username</p>
                         <p style='margin: 5px 0;'><strong>Email:</strong> $email</p>
                         <p style='margin: 5px 0;'><strong>Password:</strong> <span style='font-family: monospace; background: #e0e7ff; color: #4338ca; padding: 2px 6px; rounded: 4px;'>$plain_password</span></p>
+                        <p style='margin: 5px 0;'><strong>Role:</strong> ".ucfirst($role)."</p>
                     </div>
                     <p>Please login and change your password immediately.</p>
                 </div>";
@@ -70,6 +101,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
         } 
         else if ($_POST['action'] == 'edit') {
+            // Security: Admin tidak boleh edit Superadmin atau user di luar scope
+            // (Validasi tambahan bisa ditaruh disini, tapi query list user di bawah sudah membatasi tampilan)
+
             $stmt = $conn->prepare("UPDATE users SET username=?, email=?, role=?, access_all_companies=? WHERE id=?");
             $stmt->bind_param("sssii", $username, $email, $role, $access_all, $user_id);
             $stmt->execute();
@@ -106,22 +140,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $new_password = generateStrongPassword(10); 
             $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
 
-            // Update Database
             $conn->query("UPDATE users SET password='$hashed_password', force_reset=1 WHERE id='$uid'");
 
-            // Kirim Email
             $subject = "Password Reset - IoT Platform";
             $body = "
             <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'>
                 <h2 style='color: #F59E0B;'>Password Reset</h2>
                 <p>Hello <strong>$username</strong>,</p>
                 <p>Your password has been reset by Administrator.</p>
-                
                 <div style='background-color: #FFFBEB; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #FEF3C7;'>
                     <p style='margin: 5px 0; color: #92400E;'><strong>New Password:</strong></p>
                     <p style='margin: 5px 0; font-size: 18px; font-family: monospace; font-weight: bold; color: #D97706;'>$new_password</p>
                 </div>
-
                 <p>Use this password to login. You will be asked to create a new password immediately.</p>
             </div>";
 
@@ -153,14 +183,32 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// --- FETCH DATA ---
+// --- FETCH DATA (LOGIC FILTER ROLE) ---
+
+// 1. Fetch Companies Tree (Filtered by Scope)
 $raw_companies = [];
-$res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
-while($r = $res->fetch_assoc()) {
-    $raw_companies[$r['id']] = $r;
-    $raw_companies[$r['id']]['children'] = [];
+if ($_SESSION['role'] === 'superadmin') {
+    // Superadmin lihat semua company
+    $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
+} else {
+    // Admin hanya lihat company miliknya & turunannya
+    if (!empty($currentUserScope)) {
+        $ids_str = implode(',', $currentUserScope);
+        $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies WHERE id IN ($ids_str) ORDER BY company_name ASC");
+    } else {
+        $res = false; // No companies available
+    }
 }
+
+if ($res) {
+    while($r = $res->fetch_assoc()) {
+        $raw_companies[$r['id']] = $r;
+        $raw_companies[$r['id']]['children'] = [];
+    }
+}
+
 $tree = [];
+// Build tree from flat array
 foreach ($raw_companies as $id => &$node) {
     if ($node['parent_id'] && isset($raw_companies[$node['parent_id']])) {
         $raw_companies[$node['parent_id']]['children'][] = &$node;
@@ -179,17 +227,50 @@ function flattenTree($branch, &$output, $depth = 0) {
 }
 flattenTree($tree, $companies); 
 
-// Get Users
+// 2. Fetch Users List (Filtered by Role)
 $users = [];
-$q = $conn->query("SELECT * FROM users ORDER BY id DESC");
-while($u = $q->fetch_assoc()) {
-    $assigned_details = [];
-    if ($u['access_all_companies'] == 0) {
-        $uc = $conn->query("SELECT c.id, c.company_name, c.level FROM user_companies uc JOIN companies c ON uc.company_id = c.id WHERE uc.user_id = " . $u['id'] . " ORDER BY c.level ASC");
-        while($c = $uc->fetch_assoc()) $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level'], 'id' => $c['id']];
+
+if ($_SESSION['role'] === 'superadmin') {
+    // Superadmin: Lihat SEMUA user
+    $q = $conn->query("SELECT * FROM users ORDER BY id DESC");
+} else {
+    // Admin: Lihat user yang terhubung dengan company scope dia
+    if (!empty($currentUserScope)) {
+        $ids_str = implode(',', $currentUserScope);
+        // Query untuk ambil user yang punya relasi dengan company di scope admin
+        // DAN user tersebut BUKAN superadmin
+        $q = $conn->query("SELECT DISTINCT u.* FROM users u 
+                           JOIN user_companies uc ON u.id = uc.user_id 
+                           WHERE uc.company_id IN ($ids_str) 
+                           AND u.role != 'superadmin' 
+                           ORDER BY u.id DESC");
+    } else {
+        $q = false;
     }
-    $u['assigned_details'] = $assigned_details;
-    $users[] = $u;
+}
+
+if ($q) {
+    while($u = $q->fetch_assoc()) {
+        $assigned_details = [];
+        $total_access_count = 0;
+
+        if ($u['access_all_companies'] == 1 || $u['role'] == 'superadmin') {
+            $total_access_count = "All"; 
+        } else {
+            $uc = $conn->query("SELECT c.id, c.company_name, c.level FROM user_companies uc JOIN companies c ON uc.company_id = c.id WHERE uc.user_id = " . $u['id'] . " ORDER BY c.level ASC");
+            while($c = $uc->fetch_assoc()) {
+                $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level'], 'id' => $c['id']]; // Need ID for edit mapping
+            }
+            
+            // Hitung total akses (termasuk turunan) untuk user ini
+            $u_scope = getClientIdsForUser($u['id']);
+            $total_access_count = is_array($u_scope) ? count($u_scope) : 0;
+        }
+        
+        $u['assigned_details'] = $assigned_details;
+        $u['total_access_count'] = $total_access_count;
+        $users[] = $u;
+    }
 }
 
 function getLevelBadge($lvl) {
@@ -264,11 +345,16 @@ function getLevelBadge($lvl) {
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">User Details</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Role</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider w-[35%]">Assigned Scope</th>
+                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Total Access</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Status</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-100 dark:divide-slate-700/50">
+                                    <?php if(empty($users)): ?>
+                                        <tr><td colspan="6" class="p-8 text-center text-slate-400 italic">No users found under your access scope.</td></tr>
+                                    <?php endif; ?>
+
                                     <?php foreach($users as $user): 
                                         $roleColors = [
                                             'superadmin' => 'bg-purple-50 text-purple-700 border-purple-100 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20',
@@ -306,8 +392,6 @@ function getLevelBadge($lvl) {
                                             }
                                         }
                                         $isActive = $user['is_active'];
-                                        
-                                        // Avatar Initials
                                         $initials = strtoupper(substr($user['username'], 0, 2));
                                     ?>
                                     <tr class="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors group">
@@ -329,6 +413,14 @@ function getLevelBadge($lvl) {
                                         </td>
                                         <td class="px-6 py-4 align-middle">
                                             <?= $scopeDisplay ?>
+                                        </td>
+                                        <td class="px-6 py-4 align-middle text-center">
+                                            <div class="inline-flex flex-col items-center justify-center">
+                                                <span class="text-lg font-bold text-indigo-600 dark:text-indigo-400">
+                                                    <?= $user['total_access_count'] ?>
+                                                </span>
+                                                <span class="text-[10px] text-slate-400 uppercase">Companies</span>
+                                            </div>
                                         </td>
                                         <td class="px-6 py-4 align-middle text-center">
                                             <label class="relative inline-flex items-center cursor-pointer group-hover:scale-105 transition-transform">
@@ -412,7 +504,9 @@ function getLevelBadge($lvl) {
                                             <option value="user">User</option>
                                             <option value="sub-admin">Sub-Admin</option>
                                             <option value="admin">Admin</option>
+                                            <?php if($_SESSION['role'] === 'superadmin'): ?>
                                             <option value="superadmin">Superadmin</option>
+                                            <?php endif; ?>
                                         </select>
                                         <i class="ph ph-caret-down absolute right-3 top-3 text-slate-400 pointer-events-none"></i>
                                     </div>
@@ -442,6 +536,7 @@ function getLevelBadge($lvl) {
                             <div class="pt-4 border-t border-slate-100 dark:border-slate-800">
                                 <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-3">Data Access Scope</label>
                                 
+                                <?php if($_SESSION['role'] === 'superadmin'): ?>
                                 <label class="flex items-start p-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-800/50 cursor-pointer mb-3 transition-all hover:shadow-sm hover:border-amber-300">
                                     <div class="flex h-5 items-center">
                                         <input type="checkbox" name="access_all" id="checkAccessAll" class="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500" onchange="toggleCompanyList(this)">
@@ -451,13 +546,16 @@ function getLevelBadge($lvl) {
                                         <span class="block text-xs text-amber-700/70 dark:text-amber-500/70 mt-0.5">User can view hierarchy tree of all companies.</span>
                                     </div>
                                 </label>
+                                <?php endif; ?>
 
                                 <div id="specificCompanyList" class="transition-all duration-300">
                                     <div class="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl p-1 bg-slate-50 dark:bg-slate-800/50 space-y-0.5 custom-scrollbar">
-                                        <?php foreach($companies as $c): 
-                                            $lvlBadge = getLevelBadge($c['level']);
-                                            $indent = $c['depth'] * 24; 
-                                            $connector = ($c['depth'] > 0) ? '<i class="ph ph-arrow-elbow-down-right text-slate-300 mr-2"></i>' : '';
+                                        <?php 
+                                        if (!empty($companies)) {
+                                            foreach($companies as $c): 
+                                                $lvlBadge = getLevelBadge($c['level']);
+                                                $indent = $c['depth'] * 24; 
+                                                $connector = ($c['depth'] > 0) ? '<i class="ph ph-arrow-elbow-down-right text-slate-300 mr-2"></i>' : '';
                                         ?>
                                         <label class="cursor-pointer relative group block">
                                             <input type="checkbox" name="company_ids[]" value="<?= $c['id'] ?>" class="comp-check sr-only peer">
@@ -473,7 +571,12 @@ function getLevelBadge($lvl) {
                                                 </div>
                                             </div>
                                         </label>
-                                        <?php endforeach; ?>
+                                        <?php 
+                                            endforeach; 
+                                        } else {
+                                            echo '<div class="p-4 text-center text-xs text-slate-400 italic">No companies available for assignment.</div>';
+                                        }
+                                        ?>
                                     </div>
                                 </div>
                             </div>
@@ -508,7 +611,6 @@ function getLevelBadge($lvl) {
 
         function openModal(mode) {
             modal.classList.remove('hidden');
-            // Animasi Masuk
             setTimeout(() => {
                 modalBackdrop.classList.remove('opacity-0');
                 modalContent.classList.remove('scale-95', 'opacity-0');
@@ -522,8 +624,7 @@ function getLevelBadge($lvl) {
                 document.getElementById('userId').value = '';
                 document.getElementById('inputPassword').required = false;
                 
-                checkAll.checked = false;
-                toggleCompanyList(checkAll);
+                if(checkAll) { checkAll.checked = false; toggleCompanyList(checkAll); }
                 document.querySelectorAll('.comp-check').forEach(cb => cb.checked = false);
             }
         }
@@ -538,27 +639,28 @@ function getLevelBadge($lvl) {
             document.getElementById('inputRole').value = user.role;
             document.getElementById('inputPassword').required = false;
 
-            checkAll.checked = (user.access_all_companies == 1);
-            toggleCompanyList(checkAll);
+            if(checkAll) {
+                checkAll.checked = (user.access_all_companies == 1);
+                toggleCompanyList(checkAll);
+            }
 
             document.querySelectorAll('.comp-check').forEach(cb => cb.checked = false);
-            if(user.assigned_ids && user.assigned_ids.length > 0) {
-                user.assigned_ids.forEach(id => {
-                    const cb = document.querySelector(`.comp-check[value="${id}"]`);
+            if(user.assigned_details && user.assigned_details.length > 0) {
+                user.assigned_details.forEach(item => {
+                    const cb = document.querySelector(`.comp-check[value="${item.id}"]`);
                     if(cb) cb.checked = true;
                 });
             }
         }
 
         function closeModal() {
-            // Animasi Keluar
             modalBackdrop.classList.add('opacity-0');
             modalContent.classList.remove('scale-100', 'opacity-100');
             modalContent.classList.add('scale-95', 'opacity-0');
             
             setTimeout(() => {
                 modal.classList.add('hidden');
-            }, 300); // Sesuaikan durasi transition CSS
+            }, 300); 
         }
 
         function toggleStatus(userId, toggle) {
