@@ -17,21 +17,18 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id
     $sql = "SELECT * FROM companies WHERE id = $cid";
     $info = $conn->query($sql)->fetch_assoc();
 
-    // 2. Get Recursive Children (Anak, Cucu, Cicit...)
-    // Ambil semua company dulu untuk sorting di PHP
+    // 2. Get Recursive Children
     $allCompanies = [];
     $resAll = $conn->query("SELECT * FROM companies ORDER BY company_name ASC");
     while($row = $resAll->fetch_assoc()) {
         $allCompanies[] = $row;
     }
 
-    // Fungsi Rekursif untuk mencari keturunan
     function getDescendants($parentId, $sourceArray, &$outputArray, $depth = 0) {
         foreach ($sourceArray as $node) {
             if ($node['parent_company_id'] == $parentId) {
-                $node['depth'] = $depth; // Tambah info kedalaman untuk indentasi UI
+                $node['depth'] = $depth;
                 $outputArray[] = $node;
-                // Cari anak dari node ini (Cucu dari parentId asli)
                 getDescendants($node['id'], $sourceArray, $outputArray, $depth + 1);
             }
         }
@@ -40,7 +37,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id
     $hierarchy = [];
     getDescendants($cid, $allCompanies, $hierarchy);
 
-    // 3. Count SIMs (Hanya milik perusahaan ini)
+    // 3. Count SIMs
     $simSql = "SELECT COUNT(*) as total, SUM(CASE WHEN status = '1' THEN 1 ELSE 0 END) as active FROM sims WHERE company_id = $cid";
     $simStats = $conn->query($simSql)->fetch_assoc();
 
@@ -58,12 +55,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
     $code = $_POST['partner_code'];
     $project_name = "-"; 
     
-    // PIC Data
     $pic_name = $_POST['pic_name'] ?? '';
     $pic_email = $_POST['pic_email'] ?? '';
     $pic_phone = $_POST['pic_phone'] ?? '';
     
-    // Logic Level
     if (!empty($_POST['parent_id'])) {
         $parent_id = $_POST['parent_id'];
         $parent_level = $_POST['parent_level'];
@@ -92,38 +87,32 @@ if (isset($_GET['delete_id'])) {
 }
 
 // --- FETCH DATA ---
-
-// 1. Map Users to Company
 $userMap = [];
 $sqlUsers = "SELECT uc.company_id, u.username, u.email FROM user_companies uc JOIN users u ON uc.user_id = u.id ORDER BY u.username ASC";
 $resUsers = $conn->query($sqlUsers);
 while($u = $resUsers->fetch_assoc()){ $userMap[$u['company_id']][] = $u; }
 
-// 2. Pre-calculate Sub-Company Counts (Recursive)
 $allComps = $conn->query("SELECT id, parent_company_id FROM companies")->fetch_all(MYSQLI_ASSOC);
 $companyChildMap = [];
-// Build map: ParentID => [ChildID, ChildID...]
 foreach($allComps as $c) {
     if($c['parent_company_id']) {
         $companyChildMap[$c['parent_company_id']][] = $c['id'];
     }
 }
 
-// Helper: Hitung total keturunan (Anak + Cucu + dst)
 if (!function_exists('countTotalSubs')) {
     function countTotalSubs($parentId, $map) {
         $count = 0;
         if (isset($map[$parentId])) {
-            $count += count($map[$parentId]); // Anak langsung
+            $count += count($map[$parentId]); 
             foreach ($map[$parentId] as $childId) {
-                $count += countTotalSubs($childId, $map); // Rekursif ke cucu
+                $count += countTotalSubs($childId, $map); 
             }
         }
         return $count;
     }
 }
 
-// 3. Main Query: Hanya Level 1
 $sql = "SELECT * FROM companies WHERE level = 1 ORDER BY id DESC";
 $result = $conn->query($sql);
 ?>
@@ -155,13 +144,18 @@ $result = $conn->query($sql);
     </style>
 </head>
 <body class="bg-[#F8FAFC] dark:bg-darkbg text-slate-600 dark:text-slate-300 font-sans antialiased">
-    <div class="flex h-screen">
+    
+    <div class="flex h-screen overflow-hidden">
+        
         <?php include 'includes/sidebar.php'; ?>
         
-        <div class="flex-1 flex flex-col overflow-hidden">
-            <?php include 'includes/header.php'; ?>
+        <div class="flex-1 flex flex-col relative overflow-hidden">
             
-            <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+            <div class="relative z-40">
+                <?php include 'includes/header.php'; ?>
+            </div>
+            
+            <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 relative z-0">
                 <div class="max-w-7xl mx-auto">
                     
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -182,7 +176,7 @@ $result = $conn->query($sql);
                         </div>
                     <?php endif; ?>
 
-                    <div class="bg-white dark:bg-darkcard rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
+                    <div class="bg-white dark:bg-darkcard rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden relative z-0">
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse" id="clientTable">
                                 <thead class="bg-slate-50/80 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 backdrop-blur-sm">
@@ -388,7 +382,6 @@ $result = $conn->query($sql);
     </div>
 
     <script>
-        // --- 1. MODAL ADD ---
         const modal = document.getElementById('companyModal');
         const modalBackdrop = document.getElementById('modalBackdrop');
         const modalContent = document.getElementById('modalContent');
@@ -427,7 +420,6 @@ $result = $conn->query($sql);
             }, 300);
         }
 
-        // --- 2. DETAIL MODAL (RECURSIVE DISPLAY) ---
         const detailModal = document.getElementById('detailModal');
         const detailBackdrop = document.getElementById('detailBackdrop');
         const detailContent = document.getElementById('detailContent');
@@ -445,12 +437,10 @@ $result = $conn->query($sql);
                 .then(response => response.json())
                 .then(data => {
                     let childrenHTML = '';
-                    
                     if(data.children.length > 0) {
                         data.children.forEach(child => {
                             let indent = (child.depth || 0) * 20; 
                             let connector = child.depth > 0 ? '<i class="ph ph-arrow-elbow-down-right text-slate-300 mr-2"></i>' : '';
-                            
                             childrenHTML += `
                                 <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 mb-2">
                                     <div class="flex items-center gap-3" style="padding-left: ${indent}px">
@@ -467,8 +457,7 @@ $result = $conn->query($sql);
                                         <button onclick="showDetail(${child.id})" class="text-xs text-blue-600 hover:underline">View</button>
                                         <a href="manage-client.php?delete_id=${child.id}" onclick="return confirm('Delete this sub-company?')" class="text-xs text-red-500 hover:underline">Delete</a>
                                     </div>
-                                </div>
-                            `;
+                                </div>`;
                         });
                     } else {
                         childrenHTML = '<div class="text-center py-4 text-slate-400 text-sm italic">No sub-companies found.</div>';
@@ -476,44 +465,23 @@ $result = $conn->query($sql);
 
                     detailBody.innerHTML = `
                         <div class="mb-6 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 relative overflow-hidden">
-                            <div class="absolute top-0 right-0 p-4 opacity-10">
-                                <i class="ph ph-buildings text-6xl text-indigo-500"></i>
-                            </div>
+                            <div class="absolute top-0 right-0 p-4 opacity-10"><i class="ph ph-buildings text-6xl text-indigo-500"></i></div>
                             <div class="flex justify-between items-start mb-4 relative z-10">
-                                <div>
-                                    <h2 class="text-xl font-bold text-slate-800 dark:text-white">${data.info.company_name}</h2>
-                                    <span class="text-xs font-mono bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-500 border border-slate-200 dark:border-slate-600 mt-1 inline-block">${data.info.partner_code}</span>
-                                </div>
+                                <div><h2 class="text-xl font-bold text-slate-800 dark:text-white">${data.info.company_name}</h2><span class="text-xs font-mono bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-500 border border-slate-200 dark:border-slate-600 mt-1 inline-block">${data.info.partner_code}</span></div>
                                 <span class="px-2 py-1 bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs font-bold rounded">Level ${data.info.level}</span>
                             </div>
-                            
                             <div class="grid grid-cols-2 gap-4 text-sm relative z-10">
-                                <div>
-                                    <p class="text-xs text-slate-400 font-bold uppercase mb-1">Total SIMs</p>
-                                    <p class="font-bold text-slate-700 dark:text-white">${data.sims.total}</p>
-                                </div>
-                                <div>
-                                    <p class="text-xs text-slate-400 font-bold uppercase mb-1">PIC Contact</p>
-                                    <p class="text-slate-700 dark:text-white truncate">${data.info.pic_name || '-'}</p>
-                                    <p class="text-xs text-slate-500">${data.info.pic_email || ''}</p>
-                                </div>
+                                <div><p class="text-xs text-slate-400 font-bold uppercase mb-1">Total SIMs</p><p class="font-bold text-slate-700 dark:text-white">${data.sims.total}</p></div>
+                                <div><p class="text-xs text-slate-400 font-bold uppercase mb-1">PIC Contact</p><p class="text-slate-700 dark:text-white truncate">${data.info.pic_name || '-'}</p><p class="text-xs text-slate-500">${data.info.pic_email || ''}</p></div>
                             </div>
                         </div>
-
                         <div>
                             <div class="flex justify-between items-center mb-3">
                                 <h4 class="text-xs font-bold uppercase text-slate-400">Subsidiaries / Branches</h4>
-                                ${data.info.level < 4 ? `
-                                <button onclick="openModal('sub', '${data.info.id}', '${data.info.company_name}', '${data.info.level}')" class="text-xs flex items-center gap-1 text-primary font-bold hover:underline bg-indigo-50 px-2 py-1 rounded border border-indigo-100">
-                                    <i class="ph ph-plus-circle"></i> Add Sub
-                                </button>` : ''}
+                                ${data.info.level < 4 ? `<button onclick="openModal('sub', '${data.info.id}', '${data.info.company_name}', '${data.info.level}')" class="text-xs flex items-center gap-1 text-primary font-bold hover:underline bg-indigo-50 px-2 py-1 rounded border border-indigo-100"><i class="ph ph-plus-circle"></i> Add Sub</button>` : ''}
                             </div>
-                            
-                            <div class="space-y-1">
-                                ${childrenHTML}
-                            </div>
-                        </div>
-                    `;
+                            <div class="space-y-1">${childrenHTML}</div>
+                        </div>`;
                 })
                 .catch(err => {
                     detailBody.innerHTML = '<p class="text-red-500 text-center py-4">Failed to load details.</p>';
