@@ -136,7 +136,6 @@ $result = $conn->query($sql);
     </script>
     <style>
         .modal-anim { transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
-        .hidden-row { display: none !important; }
         .custom-scroll::-webkit-scrollbar { width: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: transparent; }
         .custom-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
@@ -145,17 +144,15 @@ $result = $conn->query($sql);
 </head>
 <body class="bg-[#F8FAFC] dark:bg-darkbg text-slate-600 dark:text-slate-300 font-sans antialiased">
     
-    <div class="flex h-screen overflow-hidden">
+    <div class="flex h-screen">
         
         <?php include 'includes/sidebar.php'; ?>
         
-        <div class="flex-1 flex flex-col relative overflow-hidden">
+        <div class="flex-1 flex flex-col overflow-hidden">
             
-            <div class="relative z-40">
-                <?php include 'includes/header.php'; ?>
-            </div>
+            <?php include 'includes/header.php'; ?>
             
-            <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 relative z-0">
+            <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
                 <div class="max-w-7xl mx-auto">
                     
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -176,7 +173,7 @@ $result = $conn->query($sql);
                         </div>
                     <?php endif; ?>
 
-                    <div class="bg-white dark:bg-darkcard rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden relative z-0">
+                    <div class="bg-white dark:bg-darkcard rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse" id="clientTable">
                                 <thead class="bg-slate-50/80 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 backdrop-blur-sm">
