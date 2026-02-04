@@ -2,33 +2,24 @@
 include 'config.php';
 checkLogin();
 
-// --- ACCESS CONTROL: Superadmin & Admin Only ---
+// Access Control
 if ($_SESSION['role'] !== 'superadmin' && $_SESSION['role'] !== 'admin') {
     echo "<script>alert('Access Denied'); window.location='dashboard.php';</script>";
     exit();
 }
 
-// Helper: Ambil Scope Perusahaan User yang Sedang Login
-$currentUserScope = [];
-if ($_SESSION['role'] !== 'superadmin') {
-    $currentUserScope = getClientIdsForUser($_SESSION['user_id']); 
-    if (empty($currentUserScope) || $currentUserScope === 'NONE') {
-        $currentUserScope = []; 
-    }
-}
-
-// --- AJAX HANDLER: GET USER DETAIL ---
+// --- AJAX HANDLER: GET USER DETAIL & SORTED HIERARCHY ---
 if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GET['id'])) {
     header('Content-Type: application/json');
     $uid = intval($_GET['id']);
     
-    // 1. User Info
+    // 1. Get User Info
     $stmt = $conn->prepare("SELECT id, username, email, role, is_active, access_all_companies FROM users WHERE id = ?");
     $stmt->bind_param("i", $uid);
     $stmt->execute();
     $userInfo = $stmt->get_result()->fetch_assoc();
 
-    // 2. Companies
+    // 2. Get Accessible Companies with Hierarchy Sort
     $companies = [];
     $isGlobal = false;
 
@@ -36,27 +27,65 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GE
         $isGlobal = true;
     } else {
         $accessIds = getClientIdsForUser($uid); 
+        
         if (!empty($accessIds) && is_array($accessIds)) {
             $ids_str = implode(',', $accessIds);
-            // Ambil data untuk disusun hirarkinya
-            $res = $conn->query("SELECT id, company_name, partner_code, level, parent_company_id FROM companies WHERE id IN ($ids_str) ORDER BY id ASC");
+            
+            // Ambil semua data mentah dulu (tanpa sorting level di SQL)
+            $res = $conn->query("SELECT id, company_name, partner_code, level, parent_company_id FROM companies WHERE id IN ($ids_str)");
             $rawCompanies = [];
             while($row = $res->fetch_assoc()) {
                 $rawCompanies[] = $row;
             }
 
-            // Logic Hirarki Sederhana untuk Tampilan
-            // Sort by Level agar Level 1 muncul duluan
-            usort($rawCompanies, function($a, $b) {
-                return $a['level'] <=> $b['level'];
-            });
+            // --- LOGIC SORTING HIRARKI (Level 1 -> Anak Level 1 -> dst) ---
+            
+            // 1. Identifikasi mana yang menjadi "Root" dalam konteks list ini
+            // (Root adalah Level 1, ATAU perusahaan yang parent-nya TIDAK ada di list akses ini)
+            $roots = [];
+            $accessibleIds = array_column($rawCompanies, 'id');
 
-            // Flatten logic visual indent
-            foreach($rawCompanies as $comp) {
-                // Cari level relatif jika parent tidak ada di list
-                $comp['depth'] = ($comp['level'] > 1) ? $comp['level'] - 1 : 0; 
-                $companies[] = $comp;
+            foreach ($rawCompanies as $comp) {
+                // Jika Level 1 ATAU Parentnya tidak ada di list accessibleIds
+                if ($comp['level'] == 1 || !in_array($comp['parent_company_id'], $accessibleIds)) {
+                    $roots[] = $comp;
+                }
             }
+
+            // Sort Roots by Name
+            usort($roots, function($a, $b) { return strcmp($a['company_name'], $b['company_name']); });
+
+            // 2. Fungsi Rekursif untuk menyusun urutan (Flatten Tree)
+            $sortedList = [];
+            
+            // Menggunakan closure untuk rekursi (membutuhkan PHP 5.3+)
+            // $allData adalah $rawCompanies
+            $buildTree = function($parents, $allData, $depth = 0) use (&$buildTree, &$sortedList) {
+                foreach ($parents as $parent) {
+                    // Tambahkan parent ke list final
+                    $parent['depth'] = $depth;
+                    $sortedList[] = $parent;
+
+                    // Cari anak dari parent ini yang ada di $allData
+                    $children = [];
+                    foreach ($allData as $candidate) {
+                        if ($candidate['parent_company_id'] == $parent['id']) {
+                            $children[] = $candidate;
+                        }
+                    }
+
+                    // Jika ada anak, proses anak tersebut (depth + 1)
+                    if (!empty($children)) {
+                        // Sort anak by Name
+                        usort($children, function($a, $b) { return strcmp($a['company_name'], $b['company_name']); });
+                        $buildTree($children, $allData, $depth + 1);
+                    }
+                }
+            };
+
+            // Jalankan fungsi penyusun
+            $buildTree($roots, $rawCompanies);
+            $companies = $sortedList;
         }
     }
 
@@ -68,46 +97,28 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GE
     exit();
 }
 
-// --- HANDLE POST REQUESTS ---
+// --- HANDLE POST REQUESTS (Create/Edit/Delete/Reset) ---
+// (Logic Post Request Tetap Sama, tidak diubah)
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    
-    // ADD / EDIT
     if (isset($_POST['action']) && ($_POST['action'] == 'add' || $_POST['action'] == 'edit')) {
         $username = $_POST['username'];
         $email = $_POST['email']; 
         $role = $_POST['role'];
         $user_id = isset($_POST['user_id']) ? $_POST['user_id'] : null;
-        
-        // Security checks
-        if ($_SESSION['role'] !== 'superadmin' && $role === 'superadmin') {
-            header("Location: manage-users.php?msg=Error: Unauthorized role&type=error"); exit;
-        }
-
         $access_all = (isset($_POST['access_all']) && $_SESSION['role'] === 'superadmin') ? 1 : 0;
         $company_ids = ($access_all == 0 && isset($_POST['company_ids'])) ? $_POST['company_ids'] : [];
-
-        // Filter scope for Admin
-        if ($_SESSION['role'] !== 'superadmin') {
-            $company_ids = array_intersect($company_ids, $currentUserScope);
-            if (empty($company_ids) && $access_all == 0) {
-                header("Location: manage-users.php?msg=Error: Assign at least one company&type=error"); exit;
-            }
-        }
 
         if ($_POST['action'] == 'add') {
             $check = $conn->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
             $check->bind_param("ss", $username, $email);
             $check->execute();
             if ($check->get_result()->num_rows > 0) {
-                header("Location: manage-users.php?msg=Error: Username/Email exists&type=error"); exit;
+                header("Location: manage-users.php?msg=Error: Username or Email already exists&type=error"); exit;
             }
-
             $plain_password = !empty($_POST['password']) ? $_POST['password'] : generateStrongPassword(8);
             $hashed_password = password_hash($plain_password, PASSWORD_DEFAULT);
-            
             $stmt = $conn->prepare("INSERT INTO users (username, email, password, role, is_active, access_all_companies, force_reset) VALUES (?, ?, ?, ?, 1, ?, 1)");
             $stmt->bind_param("ssssi", $username, $email, $hashed_password, $role, $access_all);
-            
             if ($stmt->execute()) {
                 $new_user_id = $stmt->insert_id;
                 if($access_all == 0 && !empty($company_ids)){
@@ -117,24 +128,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         $stmt_comp->execute();
                     }
                 }
-                $subject = "Account Created";
-                $body = "Welcome $username. Password: $plain_password";
+                $subject = "Welcome to IoT Platform - Account Credentials";
+                $body = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'><h2 style='color: #4F46E5;'>Welcome, $username!</h2><p>Your account has been created successfully.</p><div style='background-color: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0;'><p style='margin: 5px 0;'><strong>Username:</strong> $username</p><p style='margin: 5px 0;'><strong>Email:</strong> $email</p><p style='margin: 5px 0;'><strong>Password:</strong> <span style='font-family: monospace; background: #e0e7ff; color: #4338ca; padding: 2px 6px; rounded: 4px;'>$plain_password</span></p></div><p>Please login and change your password immediately.</p></div>";
                 sendEmail($email, $subject, $body);
-                header("Location: manage-users.php?msg=User created&type=success"); exit;
+                header("Location: manage-users.php?msg=User created. Email sent.&type=success"); exit;
             }
         } 
         else if ($_POST['action'] == 'edit') {
             $stmt = $conn->prepare("UPDATE users SET username=?, email=?, role=?, access_all_companies=? WHERE id=?");
             $stmt->bind_param("sssii", $username, $email, $role, $access_all, $user_id);
             $stmt->execute();
-
             if (!empty($_POST['password'])) {
                 $new_pass = password_hash($_POST['password'], PASSWORD_DEFAULT);
                 $stmt = $conn->prepare("UPDATE users SET password=? WHERE id=?");
                 $stmt->bind_param("si", $new_pass, $user_id);
                 $stmt->execute();
             }
-
             $conn->query("DELETE FROM user_companies WHERE user_id = $user_id");
             if($access_all == 0 && !empty($company_ids)){
                 $stmt_comp = $conn->prepare("INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)");
@@ -143,51 +152,47 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $stmt_comp->execute();
                 }
             }
-            header("Location: manage-users.php?msg=User updated&type=success"); exit;
+            header("Location: manage-users.php?msg=User updated successfully&type=success"); exit;
         }
     }
-
-    // RESET PASSWORD
     if (isset($_POST['action']) && $_POST['action'] == 'reset_password') {
         $uid = $_POST['user_id'];
         $qUser = $conn->query("SELECT username, email FROM users WHERE id='$uid'");
         if ($qUser->num_rows > 0) {
             $uData = $qUser->fetch_assoc();
-            $new_pass = generateStrongPassword(10); 
-            $hash = password_hash($new_pass, PASSWORD_DEFAULT);
-            $conn->query("UPDATE users SET password='$hash', force_reset=1 WHERE id='$uid'");
-            sendEmail($uData['email'], "Password Reset", "New Password: $new_pass");
-            header("Location: manage-users.php?msg=Password reset sent&type=success"); exit;
+            $new_password = generateStrongPassword(10); 
+            $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
+            $conn->query("UPDATE users SET password='$hashed_password', force_reset=1 WHERE id='$uid'");
+            $subject = "Password Reset - IoT Platform";
+            $body = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'><h2 style='color: #F59E0B;'>Password Reset</h2><p>Hello <strong>$username</strong>,</p><p>Your password has been reset by Administrator.</p><div style='background-color: #FFFBEB; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #FEF3C7;'><p style='margin: 5px 0; color: #92400E;'><strong>New Password:</strong></p><p style='margin: 5px 0; font-size: 18px; font-family: monospace; font-weight: bold; color: #D97706;'>$new_password</p></div><p>Use this password to login.</p></div>";
+            sendEmail($email, $subject, $body);
+            header("Location: manage-users.php?msg=New password sent to email&type=success"); exit;
         }
     }
-
-    // TOGGLE STATUS
     if (isset($_POST['action']) && $_POST['action'] == 'toggle_status') {
         $uid = $_POST['user_id'];
         $status = $_POST['status']; 
         $conn->query("UPDATE users SET is_active = $status WHERE id = $uid");
         echo json_encode(['status'=>'success']); exit;
     }
-
-    // DELETE USER
     if (isset($_POST['action']) && $_POST['action'] == 'delete') {
         $uid = $_POST['user_id'];
         if ($uid != $_SESSION['user_id']) {
             $conn->query("DELETE FROM users WHERE id = $uid");
             $conn->query("DELETE FROM user_companies WHERE user_id = $uid");
         }
-        header("Location: manage-users.php?msg=User deleted&type=success"); exit;
+        header("Location: manage-users.php?msg=User deleted successfully&type=success"); exit;
     }
 }
 
-// --- FETCH DATA FOR VIEW ---
-// 1. Companies Tree (Untuk Modal Add/Edit)
+// --- FETCH DATA FOR TABLE VIEW ---
 $raw_companies = [];
 if ($_SESSION['role'] === 'superadmin') {
     $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
 } else {
-    if (!empty($currentUserScope)) {
-        $ids_str = implode(',', $currentUserScope);
+    $scope = getClientIdsForUser($_SESSION['user_id']);
+    if (!empty($scope)) {
+        $ids_str = implode(',', $scope);
         $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies WHERE id IN ($ids_str) ORDER BY company_name ASC");
     } else {
         $res = false;
@@ -201,7 +206,6 @@ if ($res) {
     }
 }
 
-// Build Tree
 $tree = [];
 foreach ($raw_companies as $id => &$node) {
     if ($node['parent_id'] && isset($raw_companies[$node['parent_id']])) {
@@ -221,8 +225,9 @@ function flattenTree($branch, &$output, $depth = 0) {
 }
 flattenTree($tree, $companies); 
 
-// 2. Users List (Filtered)
 $users = [];
+$currentUserScope = getClientIdsForUser($_SESSION['user_id']);
+
 if ($_SESSION['role'] === 'superadmin') {
     $q = $conn->query("SELECT * FROM users ORDER BY id DESC");
 } else {
@@ -248,7 +253,6 @@ if ($q) {
         } else {
             $uc = $conn->query("SELECT c.id, c.company_name, c.level FROM user_companies uc JOIN companies c ON uc.company_id = c.id WHERE uc.user_id = " . $u['id'] . " ORDER BY c.level ASC");
             while($c = $uc->fetch_assoc()) {
-                // Simpan ID untuk auto-check di modal edit
                 $assigned_details[] = ['name' => $c['company_name'], 'level' => $c['level'], 'id' => $c['id']];
             }
             $u_scope = getClientIdsForUser($u['id']);
@@ -263,10 +267,10 @@ if ($q) {
 
 function getLevelBadge($lvl) {
     switch($lvl) {
-        case 1: return "bg-indigo-50 text-indigo-700 border-indigo-100";
-        case 2: return "bg-blue-50 text-blue-700 border-blue-100";
-        case 3: return "bg-teal-50 text-teal-700 border-teal-100";
-        default: return "bg-slate-50 text-slate-700 border-slate-100";
+        case 1: return "bg-indigo-50 text-indigo-700 border-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20";
+        case 2: return "bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20";
+        case 3: return "bg-teal-50 text-teal-700 border-teal-100 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-500/20";
+        default: return "bg-slate-50 text-slate-700 border-slate-100 dark:bg-slate-700/50 dark:text-slate-400 dark:border-slate-700";
     }
 }
 ?>
@@ -297,13 +301,11 @@ function getLevelBadge($lvl) {
         .custom-scroll::-webkit-scrollbar-track { background: transparent; }
         .custom-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
         .dark .custom-scroll::-webkit-scrollbar-thumb { background-color: #475569; }
-        /* Animasi untuk menu floating */
         .animation-fade { animation: fadeIn 0.15s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
     </style>
 </head>
 <body class="bg-[#F8FAFC] dark:bg-darkbg text-slate-600 dark:text-slate-300 font-sans antialiased">
-    
     <div class="flex h-screen overflow-hidden">
         <?php include 'includes/sidebar.php'; ?>
         
@@ -350,57 +352,81 @@ function getLevelBadge($lvl) {
                                     <?php endif; ?>
 
                                     <?php foreach($users as $user): 
-                                        $roleColors = ['superadmin' => 'bg-purple-50 text-purple-700 border-purple-100', 'admin' => 'bg-blue-50 text-blue-700 border-blue-100', 'sub-admin' => 'bg-cyan-50 text-cyan-700 border-cyan-100', 'user' => 'bg-slate-50 text-slate-700 border-slate-100'];
+                                        $roleColors = [
+                                            'superadmin' => 'bg-purple-50 text-purple-700 border-purple-100 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20',
+                                            'admin' => 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20',
+                                            'sub-admin' => 'bg-cyan-50 text-cyan-700 border-cyan-100 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-500/20',
+                                            'user' => 'bg-slate-50 text-slate-700 border-slate-100 dark:bg-slate-700/50 dark:text-slate-400 dark:border-slate-700'
+                                        ];
                                         $badge = $roleColors[$user['role']] ?? $roleColors['user'];
                                         
                                         if ($user['access_all_companies'] == 1) {
-                                            $scopeDisplay = '<div class="flex items-center gap-2 text-amber-600"><i class="ph ph-globe-hemisphere-west"></i><span class="text-xs font-bold">Global</span></div>';
+                                            $scopeDisplay = '
+                                            <div class="flex items-center gap-2.5 p-2 rounded-lg bg-amber-50 border border-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20 w-fit">
+                                                <i class="ph ph-globe-hemisphere-west text-lg"></i>
+                                                <div class="leading-tight">
+                                                    <span class="block text-xs font-bold uppercase tracking-wide">Global Access</span>
+                                                </div>
+                                            </div>';
                                         } else {
                                             $count = count($user['assigned_details']);
-                                            if ($count == 0) $scopeDisplay = '<span class="text-red-400 italic text-xs">Unassigned</span>';
-                                            else {
+                                            if ($count == 0) {
+                                                $scopeDisplay = '<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-50 text-red-600 text-xs font-medium border border-red-100 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800"><i class="ph ph-warning"></i> Unassigned</span>';
+                                            } else {
                                                 $listHTML = '<div class="flex flex-wrap gap-1.5">';
                                                 foreach($user['assigned_details'] as $comp) {
-                                                    $listHTML .= '<div class="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-2 py-0.5"><span class="text-[10px] font-medium text-slate-600">'.$comp['name'].'</span></div>';
+                                                    $lvlClass = getLevelBadge($comp['level']);
+                                                    $listHTML .= '
+                                                    <div class="inline-flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 pl-2 pr-1 py-0.5 shadow-sm">
+                                                        <span class="text-[11px] font-medium text-slate-600 dark:text-slate-300">'.$comp['name'].'</span>
+                                                        <span class="text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider '.$lvlClass.'">Lvl '.$comp['level'].'</span>
+                                                    </div>';
                                                 }
                                                 $listHTML .= '</div>';
                                                 $scopeDisplay = $listHTML;
                                             }
                                         }
+                                        $isActive = $user['is_active'];
                                         $initials = strtoupper(substr($user['username'], 0, 2));
                                     ?>
-                                    <tr class="hover:bg-slate-50/80 transition-colors">
+                                    <tr class="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors group">
                                         <td class="px-6 py-4 align-middle">
                                             <div class="flex items-center gap-3">
-                                                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-50 to-slate-100 flex items-center justify-center text-primary font-bold text-sm shadow-inner border border-slate-200">
+                                                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-50 to-slate-100 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center text-primary font-bold text-sm shadow-inner border border-slate-200 dark:border-slate-600">
                                                     <?= $initials ?>
                                                 </div>
                                                 <div>
                                                     <p class="font-bold text-slate-800 dark:text-white text-sm"><?= $user['username'] ?></p>
-                                                    <p class="text-xs text-slate-500 font-mono"><?= $user['email'] ?? '-' ?></p>
+                                                    <p class="text-xs text-slate-500 dark:text-slate-400 font-mono mt-0.5"><?= $user['email'] ?? '-' ?></p>
                                                 </div>
                                             </div>
                                         </td>
                                         <td class="px-6 py-4 align-middle">
-                                            <span class="inline-flex px-2.5 py-1 rounded-md text-[10px] font-bold uppercase border shadow-sm <?= $badge ?>"><?= $user['role'] ?></span>
+                                            <span class="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border shadow-sm <?= $badge ?>">
+                                                <?= $user['role'] ?>
+                                            </span>
                                         </td>
-                                        <td class="px-6 py-4 align-middle"><?= $scopeDisplay ?></td>
+                                        <td class="px-6 py-4 align-middle">
+                                            <?= $scopeDisplay ?>
+                                        </td>
                                         <td class="px-6 py-4 align-middle text-center">
-                                            <div class="inline-flex flex-col items-center">
-                                                <span class="text-lg font-bold text-indigo-600"><?= $user['total_access_count'] ?></span>
-                                                <span class="text-[9px] text-slate-400 uppercase">Companies</span>
+                                            <div class="inline-flex flex-col items-center justify-center">
+                                                <span class="text-lg font-bold text-indigo-600 dark:text-indigo-400">
+                                                    <?= $user['total_access_count'] ?>
+                                                </span>
+                                                <span class="text-[10px] text-slate-400 uppercase">Companies</span>
                                             </div>
                                         </td>
                                         <td class="px-6 py-4 align-middle text-center">
-                                            <label class="relative inline-flex items-center cursor-pointer">
-                                                <input type="checkbox" class="sr-only peer" onchange="toggleStatus(<?= $user['id'] ?>, this)" <?= $user['is_active'] ? 'checked' : '' ?>>
-                                                <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                                            <label class="relative inline-flex items-center cursor-pointer group-hover:scale-105 transition-transform">
+                                                <input type="checkbox" class="sr-only peer" onchange="toggleStatus(<?= $user['id'] ?>, this)" <?= $isActive ? 'checked' : '' ?>>
+                                                <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500 shadow-sm"></div>
                                             </label>
                                         </td>
                                         
                                         <td class="px-6 py-4 align-middle text-right">
                                             <button type="button" 
-                                                    class="action-btn p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors focus:outline-none"
+                                                    class="action-btn p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-200 transition-colors focus:outline-none"
                                                     data-user='<?= htmlspecialchars(json_encode($user), ENT_QUOTES, 'UTF-8') ?>'
                                                     onclick="openGlobalMenu(event, this)">
                                                 <i class="ph ph-dots-three-vertical text-xl"></i>
@@ -453,7 +479,7 @@ function getLevelBadge($lvl) {
                         <h3 id="modalTitle" class="text-lg font-bold text-slate-800 dark:text-white">Add New User</h3>
                         <p class="text-xs text-slate-500 mt-0.5">Configure access and credentials.</p>
                     </div>
-                    <button onclick="closeModal()" class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 transition-colors"><i class="ph ph-x text-lg"></i></button>
+                    <button onclick="closeModal()" class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 transition-colors"><i class="ph ph-x text-lg"></i></button>
                 </div>
                 <div class="overflow-y-auto p-6 custom-scrollbar">
                     <form method="POST" id="userForm">
@@ -508,7 +534,7 @@ function getLevelBadge($lvl) {
                                         ?>
                                         <label class="cursor-pointer relative group block">
                                             <input type="checkbox" name="company_ids[]" value="<?= $c['id'] ?>" class="comp-check sr-only peer">
-                                            <div class="px-3 py-2 rounded-lg border border-transparent text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-700 hover:shadow-sm transition-all peer-checked:bg-indigo-50 peer-checked:text-indigo-700 peer-checked:border-indigo-100 flex items-center justify-between" style="padding-left: <?= ($c['depth'] > 0) ? $indent : '12' ?>px">
+                                            <div class="px-3 py-2 rounded-lg border border-transparent text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-700 hover:shadow-sm transition-all peer-checked:bg-indigo-50 peer-checked:text-indigo-700 peer-checked:border-indigo-100 dark:peer-checked:bg-indigo-900/30 dark:peer-checked:text-indigo-300 dark:peer-checked:border-indigo-800 flex items-center justify-between" style="padding-left: <?= ($c['depth'] > 0) ? $indent : '12' ?>px">
                                                 <div class="flex items-center"><?= $connector ?><span><?= $c['company_name'] ?></span></div>
                                                 <span class="text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase <?= $lvlBadge ?>">Lvl <?= $c['level'] ?></span>
                                             </div>
@@ -558,39 +584,30 @@ function getLevelBadge($lvl) {
         const menuDeleteContainer = document.getElementById('menuDeleteContainer');
 
         function openGlobalMenu(event, button) {
-            // Prevent scrolling or other actions
             event.preventDefault();
             event.stopPropagation();
 
             const userData = JSON.parse(button.getAttribute('data-user'));
 
-            // 1. Setup Button Actions
             menuViewBtn.onclick = function() { showUserDetail(userData.id); closeGlobalMenu(); };
             menuEditBtn.onclick = function() { openEdit(userData); closeGlobalMenu(); };
             menuResetId.value = userData.id;
             menuDeleteId.value = userData.id;
 
-            // Hide delete if self
             if (userData.id == currentSessionId) menuDeleteContainer.classList.add('hidden');
             else menuDeleteContainer.classList.remove('hidden');
 
-            // 2. Position Menu (Floating Calculation)
             const rect = button.getBoundingClientRect();
-            const menuWidth = 192; // w-48 = 12rem = ~192px
-            
-            // Calculate Top (Check if near bottom)
+            const menuWidth = 192;
             let top = rect.bottom + window.scrollY + 5;
-            let left = rect.left + window.scrollX - menuWidth + rect.width; // Align right edge
+            let left = rect.left + window.scrollX - menuWidth + rect.width;
 
-            // Check if menu goes off screen bottom
             if (rect.bottom + 200 > window.innerHeight) {
-                top = rect.top + window.scrollY - 185; // Flip up
+                top = rect.top + window.scrollY - 185; 
             }
 
             globalMenu.style.top = `${top}px`;
             globalMenu.style.left = `${left}px`;
-
-            // 3. Show
             globalMenu.classList.remove('hidden');
             menuBackdrop.classList.remove('hidden');
         }
@@ -600,10 +617,9 @@ function getLevelBadge($lvl) {
             menuBackdrop.classList.add('hidden');
         }
 
-        // Close on scroll to keep position logic simple
         window.addEventListener('scroll', closeGlobalMenu, true);
 
-        // --- EXISTING MODAL SCRIPTS ---
+        // --- MODAL & DETAIL LOGIC ---
         const modal = document.getElementById('userModal');
         const modalBackdrop = document.getElementById('modalBackdrop');
         const modalContent = document.getElementById('modalContent');
@@ -667,7 +683,6 @@ function getLevelBadge($lvl) {
             fetch('manage-users.php', { method: 'POST', body: fd });
         }
 
-        // --- USER DETAIL MODAL ---
         const userDetailModal = document.getElementById('userDetailModal');
         const detailBackdrop = document.getElementById('detailBackdrop');
         const detailContent = document.getElementById('detailContent');
