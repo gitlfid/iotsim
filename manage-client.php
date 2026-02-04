@@ -8,7 +8,7 @@ if ($_SESSION['role'] == 'user') {
     exit();
 }
 
-// --- AJAX HANDLER: GET COMPANY DETAIL & CHILDREN ---
+// --- AJAX HANDLER: GET COMPANY DETAIL & RECURSIVE CHILDREN ---
 if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id'])) {
     header('Content-Type: application/json');
     $cid = intval($_GET['id']);
@@ -17,21 +17,36 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id
     $sql = "SELECT * FROM companies WHERE id = $cid";
     $info = $conn->query($sql)->fetch_assoc();
 
-    // 2. Get Children (Sub-Companies)
-    $children = [];
-    $childSql = "SELECT * FROM companies WHERE parent_company_id = $cid ORDER BY id DESC";
-    $resChild = $conn->query($childSql);
-    while($row = $resChild->fetch_assoc()) {
-        $children[] = $row;
+    // 2. Get Recursive Children (Anak, Cucu, Cicit...)
+    // Ambil semua company dulu untuk sorting di PHP (lebih aman support versi MySQL lama)
+    $allCompanies = [];
+    $resAll = $conn->query("SELECT * FROM companies ORDER BY company_name ASC");
+    while($row = $resAll->fetch_assoc()) {
+        $allCompanies[] = $row;
     }
 
-    // 3. Count SIMs
+    // Fungsi Rekursif untuk mencari keturunan
+    function getDescendants($parentId, $sourceArray, &$outputArray, $depth = 0) {
+        foreach ($sourceArray as $node) {
+            if ($node['parent_company_id'] == $parentId) {
+                $node['depth'] = $depth; // Tambah info kedalaman untuk indentasi UI
+                $outputArray[] = $node;
+                // Cari anak dari node ini (Cucu dari parentId asli)
+                getDescendants($node['id'], $sourceArray, $outputArray, $depth + 1);
+            }
+        }
+    }
+
+    $hierarchy = [];
+    getDescendants($cid, $allCompanies, $hierarchy);
+
+    // 3. Count SIMs (Hanya milik perusahaan ini)
     $simSql = "SELECT COUNT(*) as total, SUM(CASE WHEN status = '1' THEN 1 ELSE 0 END) as active FROM sims WHERE company_id = $cid";
     $simStats = $conn->query($simSql)->fetch_assoc();
 
     echo json_encode([
         'info' => $info,
-        'children' => $children,
+        'children' => $hierarchy, // Ini sekarang berisi seluruh keturunan berurut
         'sims' => $simStats
     ]);
     exit();
@@ -41,9 +56,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
     $name = $_POST['company_name'];
     $code = $_POST['partner_code'];
-    
-    // FIX: Set default value untuk project_name agar tidak error di database
-    $project_name = "-"; 
+    $project_name = "-"; // Default value sesuai request sebelumnya
     
     // PIC Data
     $pic_name = $_POST['pic_name'] ?? '';
@@ -60,7 +73,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
         $level = 1; 
     }
     
-    // Update Query: Tambahkan project_name ke dalam INSERT
     $stmt = $conn->prepare("INSERT INTO companies (company_name, partner_code, level, parent_company_id, pic_name, pic_email, pic_phone, project_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     $stmt->bind_param("ssiissss", $name, $code, $level, $parent_id, $pic_name, $pic_email, $pic_phone, $project_name);
     
@@ -72,6 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
 // --- HANDLE DELETE ---
 if (isset($_GET['delete_id'])) {
     $del_id = intval($_GET['delete_id']);
+    // Note: Delete logic should ideally be recursive or cascade in DB
     $stmt = $conn->prepare("DELETE FROM companies WHERE id = ?");
     $stmt->bind_param("i", $del_id);
     if($stmt->execute()) {
@@ -79,7 +92,7 @@ if (isset($_GET['delete_id'])) {
     }
 }
 
-// --- FETCH DATA (ONLY LEVEL 1 / ROOT COMPANIES) ---
+// --- FETCH DATA (ONLY LEVEL 1 / ROOT COMPANIES FOR MAIN TABLE) ---
 $userMap = [];
 $sqlUsers = "SELECT uc.company_id, u.username, u.email FROM user_companies uc JOIN users u ON uc.user_id = u.id ORDER BY u.username ASC";
 $resUsers = $conn->query($sqlUsers);
@@ -110,7 +123,6 @@ $result = $conn->query($sql);
     <style>
         .modal-anim { transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
         .hidden-row { display: none !important; }
-        /* Custom Scrollbar for Modal */
         .custom-scroll::-webkit-scrollbar { width: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: transparent; }
         .custom-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
@@ -320,8 +332,8 @@ $result = $conn->query($sql);
                 
                 <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50 rounded-t-2xl">
                     <div>
-                        <h3 class="text-lg font-bold text-slate-800 dark:text-white">Company Details</h3>
-                        <p class="text-xs text-slate-500">Manage structure and PIC information.</p>
+                        <h3 class="text-lg font-bold text-slate-800 dark:text-white">Company Structure</h3>
+                        <p class="text-xs text-slate-500">Managing hierarchy & subsidiaries.</p>
                     </div>
                     <button onclick="closeDetail()" class="w-8 h-8 flex items-center justify-center rounded-full bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-600 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors">
                         <i class="ph ph-x text-lg"></i>
@@ -331,7 +343,7 @@ $result = $conn->query($sql);
                 <div class="flex-1 overflow-y-auto custom-scroll p-6" id="detailBody">
                     <div class="flex flex-col items-center justify-center py-12 text-slate-400">
                         <i class="ph ph-spinner animate-spin text-3xl mb-2 text-primary"></i>
-                        <span class="text-sm">Fetching company data...</span>
+                        <span class="text-sm">Fetching hierarchy data...</span>
                     </div>
                 </div>
             </div>
@@ -346,9 +358,6 @@ $result = $conn->query($sql);
         const parentInfoBox = document.getElementById('parentInfoBox');
         
         function openModal(mode, parentId = '', parentName = '', parentLevel = '') {
-            // Jika buka dari detail, tutup detail dulu (opsional, tp lebih bersih)
-            // Tapi user minta "di menu details juga bisa menambahkan", jadi kita tumpuk saja (z-index diatur)
-            
             modal.classList.remove('hidden');
             setTimeout(() => {
                 modalBackdrop.classList.remove('opacity-0');
@@ -379,7 +388,7 @@ $result = $conn->query($sql);
             setTimeout(() => { modal.classList.add('hidden'); }, 300);
         }
 
-        // --- 2. DETAIL MODAL (AJAX) ---
+        // --- 2. DETAIL MODAL (RECURSIVE DISPLAY) ---
         const detailModal = document.getElementById('detailModal');
         const detailBackdrop = document.getElementById('detailBackdrop');
         const detailContent = document.getElementById('detailContent');
@@ -393,26 +402,33 @@ $result = $conn->query($sql);
                 detailContent.classList.add('scale-100', 'opacity-100');
             }, 10);
 
-            // Fetch Data
             fetch(`manage-client.php?action=get_detail&id=${id}`)
                 .then(response => response.json())
                 .then(data => {
                     let childrenHTML = '';
+                    
                     if(data.children.length > 0) {
                         data.children.forEach(child => {
+                            // Hitung indentasi berdasarkan kedalaman (depth)
+                            let indent = (child.depth || 0) * 20; 
+                            // Indikator visual untuk anak
+                            let connector = child.depth > 0 ? '<i class="ph ph-arrow-elbow-down-right text-slate-300 mr-2"></i>' : '';
+                            
                             childrenHTML += `
-                                <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
-                                    <div class="flex items-center gap-3">
-                                        <div class="w-8 h-8 rounded bg-white dark:bg-slate-800 flex items-center justify-center text-emerald-600 border border-slate-200 dark:border-slate-700">
-                                            <i class="ph ph-arrow-elbow-down-right"></i>
+                                <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 mb-2">
+                                    <div class="flex items-center gap-3" style="padding-left: ${indent}px">
+                                        ${connector}
+                                        <div class="w-8 h-8 rounded bg-white dark:bg-slate-800 flex items-center justify-center text-emerald-600 border border-slate-200 dark:border-slate-700 shrink-0">
+                                            <i class="ph ph-buildings"></i>
                                         </div>
                                         <div>
                                             <p class="text-sm font-bold text-slate-800 dark:text-white">${child.company_name}</p>
                                             <p class="text-[10px] text-slate-400">${child.partner_code} • Lvl ${child.level}</p>
                                         </div>
                                     </div>
-                                    <div class="flex gap-2">
+                                    <div class="flex gap-2 shrink-0">
                                         <button onclick="showDetail(${child.id})" class="text-xs text-blue-600 hover:underline">View</button>
+                                        
                                         <a href="manage-client.php?delete_id=${child.id}" onclick="return confirm('Delete this sub-company?')" class="text-xs text-red-500 hover:underline">Delete</a>
                                     </div>
                                 </div>
@@ -422,61 +438,42 @@ $result = $conn->query($sql);
                         childrenHTML = '<div class="text-center py-4 text-slate-400 text-sm italic">No sub-companies found.</div>';
                     }
 
-                    // Render Detail View
                     detailBody.innerHTML = `
-                        <div class="grid grid-cols-2 gap-4 mb-6">
-                            <div class="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl border border-indigo-100 dark:border-indigo-800">
-                                <div class="flex justify-between items-start mb-2">
-                                    <div class="p-2 bg-white dark:bg-indigo-900/50 rounded-lg text-indigo-600"><i class="ph ph-sim-card text-xl"></i></div>
-                                    <span class="text-xs font-bold bg-white/50 px-2 py-1 rounded text-indigo-700">Total SIMs</span>
-                                </div>
-                                <p class="text-2xl font-bold text-slate-800 dark:text-white">${data.sims.total}</p>
+                        <div class="mb-6 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 relative overflow-hidden">
+                            <div class="absolute top-0 right-0 p-4 opacity-10">
+                                <i class="ph ph-buildings text-6xl text-indigo-500"></i>
                             </div>
-                            <div class="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-100 dark:border-emerald-800">
-                                <div class="flex justify-between items-start mb-2">
-                                    <div class="p-2 bg-white dark:bg-emerald-900/50 rounded-lg text-emerald-600"><i class="ph ph-broadcast text-xl"></i></div>
-                                    <span class="text-xs font-bold bg-white/50 px-2 py-1 rounded text-emerald-700">Active</span>
-                                </div>
-                                <p class="text-2xl font-bold text-slate-800 dark:text-white">${data.sims.active}</p>
-                            </div>
-                        </div>
-
-                        <div class="mb-6 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-                            <div class="flex justify-between items-start mb-4">
+                            <div class="flex justify-between items-start mb-4 relative z-10">
                                 <div>
-                                    <h2 class="text-lg font-bold text-slate-800 dark:text-white">${data.info.company_name}</h2>
-                                    <span class="text-xs font-mono bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-500">${data.info.partner_code}</span>
+                                    <h2 class="text-xl font-bold text-slate-800 dark:text-white">${data.info.company_name}</h2>
+                                    <span class="text-xs font-mono bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-500 border border-slate-200 dark:border-slate-600 mt-1 inline-block">${data.info.partner_code}</span>
                                 </div>
-                                <span class="px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 text-xs font-bold rounded">Level ${data.info.level}</span>
+                                <span class="px-2 py-1 bg-indigo-50 text-indigo-600 border border-indigo-100 text-xs font-bold rounded">Level ${data.info.level}</span>
                             </div>
                             
-                            <h4 class="text-xs font-bold uppercase text-slate-400 mb-3 border-b border-slate-100 dark:border-slate-700 pb-1">PIC Contact</h4>
-                            <div class="space-y-2 text-sm">
-                                <div class="flex items-center gap-3">
-                                    <i class="ph ph-user text-slate-400"></i>
-                                    <span class="text-slate-700 dark:text-slate-300 font-medium">${data.info.pic_name || '-'}</span>
+                            <div class="grid grid-cols-2 gap-4 text-sm relative z-10">
+                                <div>
+                                    <p class="text-xs text-slate-400 font-bold uppercase mb-1">Total SIMs</p>
+                                    <p class="font-bold text-slate-700 dark:text-white">${data.sims.total}</p>
                                 </div>
-                                <div class="flex items-center gap-3">
-                                    <i class="ph ph-envelope text-slate-400"></i>
-                                    <span class="text-slate-700 dark:text-slate-300">${data.info.pic_email || '-'}</span>
-                                </div>
-                                <div class="flex items-center gap-3">
-                                    <i class="ph ph-phone text-slate-400"></i>
-                                    <span class="text-slate-700 dark:text-slate-300 font-mono">${data.info.pic_phone || '-'}</span>
+                                <div>
+                                    <p class="text-xs text-slate-400 font-bold uppercase mb-1">PIC Contact</p>
+                                    <p class="text-slate-700 dark:text-white truncate">${data.info.pic_name || '-'}</p>
+                                    <p class="text-xs text-slate-500">${data.info.pic_email || ''}</p>
                                 </div>
                             </div>
                         </div>
 
                         <div>
                             <div class="flex justify-between items-center mb-3">
-                                <h4 class="text-xs font-bold uppercase text-slate-400">Sub-Companies</h4>
+                                <h4 class="text-xs font-bold uppercase text-slate-400">Subsidiaries / Branches</h4>
                                 ${data.info.level < 4 ? `
-                                <button onclick="openModal('sub', '${data.info.id}', '${data.info.company_name}', '${data.info.level}')" class="text-xs flex items-center gap-1 text-primary font-bold hover:underline">
+                                <button onclick="openModal('sub', '${data.info.id}', '${data.info.company_name}', '${data.info.level}')" class="text-xs flex items-center gap-1 text-primary font-bold hover:underline bg-indigo-50 px-2 py-1 rounded border border-indigo-100">
                                     <i class="ph ph-plus-circle"></i> Add Sub
                                 </button>` : ''}
                             </div>
                             
-                            <div class="space-y-2">
+                            <div class="space-y-1">
                                 ${childrenHTML}
                             </div>
                         </div>

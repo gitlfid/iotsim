@@ -8,7 +8,7 @@ if ($_SESSION['role'] !== 'superadmin' && $_SESSION['role'] !== 'admin') {
     exit();
 }
 
-// --- HANDLE POST REQUESTS (LOGIC TETAP SAMA) ---
+// --- HANDLE POST REQUESTS ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
     // 1. ADD / EDIT USER
