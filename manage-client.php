@@ -18,7 +18,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id
     $info = $conn->query($sql)->fetch_assoc();
 
     // 2. Get Recursive Children (Anak, Cucu, Cicit...)
-    // Ambil semua company dulu untuk sorting di PHP (lebih aman support versi MySQL lama)
+    // Ambil semua company dulu untuk sorting di PHP
     $allCompanies = [];
     $resAll = $conn->query("SELECT * FROM companies ORDER BY company_name ASC");
     while($row = $resAll->fetch_assoc()) {
@@ -46,7 +46,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id
 
     echo json_encode([
         'info' => $info,
-        'children' => $hierarchy, // Ini sekarang berisi seluruh keturunan berurut
+        'children' => $hierarchy, 
         'sims' => $simStats
     ]);
     exit();
@@ -56,7 +56,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
     $name = $_POST['company_name'];
     $code = $_POST['partner_code'];
-    $project_name = "-"; // Default value sesuai request sebelumnya
+    $project_name = "-"; 
     
     // PIC Data
     $pic_name = $_POST['pic_name'] ?? '';
@@ -84,7 +84,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
 // --- HANDLE DELETE ---
 if (isset($_GET['delete_id'])) {
     $del_id = intval($_GET['delete_id']);
-    // Note: Delete logic should ideally be recursive or cascade in DB
     $stmt = $conn->prepare("DELETE FROM companies WHERE id = ?");
     $stmt->bind_param("i", $del_id);
     if($stmt->execute()) {
@@ -92,13 +91,39 @@ if (isset($_GET['delete_id'])) {
     }
 }
 
-// --- FETCH DATA (ONLY LEVEL 1 / ROOT COMPANIES FOR MAIN TABLE) ---
+// --- FETCH DATA ---
+
+// 1. Map Users to Company
 $userMap = [];
 $sqlUsers = "SELECT uc.company_id, u.username, u.email FROM user_companies uc JOIN users u ON uc.user_id = u.id ORDER BY u.username ASC";
 $resUsers = $conn->query($sqlUsers);
 while($u = $resUsers->fetch_assoc()){ $userMap[$u['company_id']][] = $u; }
 
-// Main Query: Hanya Level 1
+// 2. Pre-calculate Sub-Company Counts (Recursive)
+$allComps = $conn->query("SELECT id, parent_company_id FROM companies")->fetch_all(MYSQLI_ASSOC);
+$companyChildMap = [];
+// Build map: ParentID => [ChildID, ChildID...]
+foreach($allComps as $c) {
+    if($c['parent_company_id']) {
+        $companyChildMap[$c['parent_company_id']][] = $c['id'];
+    }
+}
+
+// Helper: Hitung total keturunan (Anak + Cucu + dst)
+if (!function_exists('countTotalSubs')) {
+    function countTotalSubs($parentId, $map) {
+        $count = 0;
+        if (isset($map[$parentId])) {
+            $count += count($map[$parentId]); // Anak langsung
+            foreach ($map[$parentId] as $childId) {
+                $count += countTotalSubs($childId, $map); // Rekursif ke cucu
+            }
+        }
+        return $count;
+    }
+}
+
+// 3. Main Query: Hanya Level 1
 $sql = "SELECT * FROM companies WHERE level = 1 ORDER BY id DESC";
 $result = $conn->query($sql);
 ?>
@@ -166,6 +191,9 @@ $result = $conn->query($sql);
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Company Name</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Assigned Users</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Partner Code</th>
+                                        
+                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Total Subs</th>
+                                        
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Level</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right w-24">Detail</th>
                                     </tr>
@@ -173,10 +201,11 @@ $result = $conn->query($sql);
                                 <tbody class="divide-y divide-slate-100 dark:divide-slate-700/50">
                                     <?php 
                                     if($result->num_rows == 0) {
-                                        echo '<tr><td colspan="6" class="p-12 text-center text-slate-400"><i class="ph ph-briefcase text-4xl mb-2 block"></i>No companies found.</td></tr>';
+                                        echo '<tr><td colspan="7" class="p-12 text-center text-slate-400"><i class="ph ph-briefcase text-4xl mb-2 block"></i>No companies found.</td></tr>';
                                     } else {
                                         while($row = $result->fetch_assoc()): 
                                             $users = isset($userMap[$row['id']]) ? $userMap[$row['id']] : [];
+                                            $subCount = countTotalSubs($row['id'], $companyChildMap);
                                     ?>
                                     <tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-100 dark:border-slate-800">
                                         <td class="px-6 py-4 text-xs font-mono text-slate-400">#<?= str_pad($row['id'], 3, '0', STR_PAD_LEFT) ?></td>
@@ -222,6 +251,16 @@ $result = $conn->query($sql);
                                             </span>
                                         </td>
                                         
+                                        <td class="px-6 py-4 text-center">
+                                            <?php if ($subCount > 0): ?>
+                                                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-600 border border-amber-100 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800">
+                                                    <i class="ph ph-tree-structure"></i> <?= $subCount ?>
+                                                </span>
+                                            <?php else: ?>
+                                                <span class="text-xs text-slate-300 dark:text-slate-600 font-mono">-</span>
+                                            <?php endif; ?>
+                                        </td>
+
                                         <td class="px-6 py-4 text-center">
                                             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-indigo-50 text-indigo-600 border-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-400 dark:border-indigo-800">
                                                 Level 1
@@ -373,7 +412,7 @@ $result = $conn->query($sql);
                 document.getElementById('inputIdLevel').value = "";
             } else {
                 document.getElementById('modalTitle').innerText = "Add Sub-Company";
-                document.getElementById('modalSubtitle').innerText = "Create a child company.";
+                document.getElementById('modalSubtitle').innerText = "Create a child company under the selected parent.";
                 parentInfoBox.classList.remove('hidden');
                 document.getElementById('parentNameDisplay').innerText = parentName;
                 document.getElementById('inputIdParent').value = parentId;
@@ -385,7 +424,9 @@ $result = $conn->query($sql);
             modalBackdrop.classList.add('opacity-0');
             modalContent.classList.remove('scale-100', 'opacity-100');
             modalContent.classList.add('scale-95', 'opacity-0');
-            setTimeout(() => { modal.classList.add('hidden'); }, 300);
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
         }
 
         // --- 2. DETAIL MODAL (RECURSIVE DISPLAY) ---
@@ -409,9 +450,7 @@ $result = $conn->query($sql);
                     
                     if(data.children.length > 0) {
                         data.children.forEach(child => {
-                            // Hitung indentasi berdasarkan kedalaman (depth)
                             let indent = (child.depth || 0) * 20; 
-                            // Indikator visual untuk anak
                             let connector = child.depth > 0 ? '<i class="ph ph-arrow-elbow-down-right text-slate-300 mr-2"></i>' : '';
                             
                             childrenHTML += `
@@ -428,7 +467,6 @@ $result = $conn->query($sql);
                                     </div>
                                     <div class="flex gap-2 shrink-0">
                                         <button onclick="showDetail(${child.id})" class="text-xs text-blue-600 hover:underline">View</button>
-                                        
                                         <a href="manage-client.php?delete_id=${child.id}" onclick="return confirm('Delete this sub-company?')" class="text-xs text-red-500 hover:underline">Delete</a>
                                     </div>
                                 </div>
