@@ -102,21 +102,19 @@ while($u = $resUsers->fetch_assoc()){ $userMap[$u['company_id']][] = $u; }
 // 2. Pre-calculate Sub-Company Counts (Recursive)
 $allComps = $conn->query("SELECT id, parent_company_id FROM companies")->fetch_all(MYSQLI_ASSOC);
 $companyChildMap = [];
-// Build map: ParentID => [ChildID, ChildID...]
 foreach($allComps as $c) {
     if($c['parent_company_id']) {
         $companyChildMap[$c['parent_company_id']][] = $c['id'];
     }
 }
 
-// Helper: Hitung total keturunan (Anak + Cucu + dst)
 if (!function_exists('countTotalSubs')) {
     function countTotalSubs($parentId, $map) {
         $count = 0;
         if (isset($map[$parentId])) {
-            $count += count($map[$parentId]); // Anak langsung
+            $count += count($map[$parentId]); 
             foreach ($map[$parentId] as $childId) {
-                $count += countTotalSubs($childId, $map); // Rekursif ke cucu
+                $count += countTotalSubs($childId, $map); 
             }
         }
         return $count;
@@ -155,10 +153,10 @@ $result = $conn->query($sql);
     </style>
 </head>
 <body class="bg-[#F8FAFC] dark:bg-darkbg text-slate-600 dark:text-slate-300 font-sans antialiased">
-    <div class="flex h-screen overflow-hidden">
+    <div class="flex h-screen">
         <?php include 'includes/sidebar.php'; ?>
         
-        <div class="flex-1 flex flex-col overflow-hidden relative">
+        <div class="flex-1 flex flex-col overflow-hidden">
             <?php include 'includes/header.php'; ?>
             
             <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
@@ -191,9 +189,7 @@ $result = $conn->query($sql);
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Company Name</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Assigned Users</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Partner Code</th>
-                                        
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Total Subs</th>
-                                        
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Level</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right w-24">Detail</th>
                                     </tr>
