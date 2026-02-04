@@ -8,41 +8,30 @@ if ($_SESSION['role'] == 'user') {
     exit();
 }
 
-// --- AJAX HANDLER: GET COMPANY DETAIL ---
+// --- AJAX HANDLER: GET COMPANY DETAIL & CHILDREN ---
 if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id'])) {
     header('Content-Type: application/json');
     $cid = intval($_GET['id']);
     
-    // 1. Get Basic Info & Parent Info
-    $sql = "SELECT c.*, p.company_name as parent_name, p.level as parent_level, p.id as parent_id 
-            FROM companies c 
-            LEFT JOIN companies p ON c.parent_company_id = p.id 
-            WHERE c.id = $cid";
+    // 1. Get Company Info
+    $sql = "SELECT * FROM companies WHERE id = $cid";
     $info = $conn->query($sql)->fetch_assoc();
 
-    // 2. Get Grandparent (if exists - for Level 3)
-    $hierarchy = [];
-    if ($info['parent_id']) {
-        // Cek apakah parent punya parent lagi (Grandparent)
-        $gpSql = "SELECT company_name, id FROM companies WHERE id = " . $info['parent_company_id']; // Parent's Parent
-        // Simple logic: traverse up. For now, let's build a simple chain.
-        // Level 1 (Root) -> Level 2 -> Level 3 (Self)
-        
-        // Add Parent
-        $hierarchy[] = ['name' => $info['parent_name'], 'level' => $info['parent_level']];
+    // 2. Get Children (Sub-Companies)
+    $children = [];
+    $childSql = "SELECT * FROM companies WHERE parent_company_id = $cid ORDER BY id DESC";
+    $resChild = $conn->query($childSql);
+    while($row = $resChild->fetch_assoc()) {
+        $children[] = $row;
     }
-    // Add Self
-    $hierarchy[] = ['name' => $info['company_name'], 'level' => $info['level'], 'current' => true];
 
     // 3. Count SIMs
-    $simSql = "SELECT COUNT(*) as total, 
-               SUM(CASE WHEN status = '1' THEN 1 ELSE 0 END) as active 
-               FROM sims WHERE company_id = $cid";
+    $simSql = "SELECT COUNT(*) as total, SUM(CASE WHEN status = '1' THEN 1 ELSE 0 END) as active FROM sims WHERE company_id = $cid";
     $simStats = $conn->query($simSql)->fetch_assoc();
 
     echo json_encode([
         'info' => $info,
-        'hierarchy' => $hierarchy,
+        'children' => $children,
         'sims' => $simStats
     ]);
     exit();
@@ -52,9 +41,13 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
     $name = $_POST['company_name'];
     $code = $_POST['partner_code'];
-    // Project Name dihapus dari input, set default empty string atau NULL
-    $project = ""; 
     
+    // PIC Data
+    $pic_name = $_POST['pic_name'] ?? '';
+    $pic_email = $_POST['pic_email'] ?? '';
+    $pic_phone = $_POST['pic_phone'] ?? '';
+    
+    // Logic Level
     if (!empty($_POST['parent_id'])) {
         $parent_id = $_POST['parent_id'];
         $parent_level = $_POST['parent_level'];
@@ -64,8 +57,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_company'])) {
         $level = 1; 
     }
     
-    $stmt = $conn->prepare("INSERT INTO companies (company_name, project_name, partner_code, level, parent_company_id) VALUES (?, ?, ?, ?, ?)");
-    $stmt->bind_param("ssssi", $name, $project, $code, $level, $parent_id);
+    $stmt = $conn->prepare("INSERT INTO companies (company_name, partner_code, level, parent_company_id, pic_name, pic_email, pic_phone) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("ssiisss", $name, $code, $level, $parent_id, $pic_name, $pic_email, $pic_phone);
     
     if($stmt->execute()) {
         header("Location: manage-client.php?msg=added"); exit();
@@ -82,135 +75,15 @@ if (isset($_GET['delete_id'])) {
     }
 }
 
-// --- FETCH DATA ---
-// A. Users
+// --- FETCH DATA (ONLY LEVEL 1 / ROOT COMPANIES) ---
 $userMap = [];
-$sqlUsers = "SELECT uc.company_id, u.username, u.email, u.role FROM user_companies uc JOIN users u ON uc.user_id = u.id ORDER BY u.username ASC";
+$sqlUsers = "SELECT uc.company_id, u.username, u.email FROM user_companies uc JOIN users u ON uc.user_id = u.id ORDER BY u.username ASC";
 $resUsers = $conn->query($sqlUsers);
 while($u = $resUsers->fetch_assoc()){ $userMap[$u['company_id']][] = $u; }
 
-// B. Companies Tree
-$sql = "SELECT c1.*, c2.company_name as parent_name FROM companies c1 LEFT JOIN companies c2 ON c1.parent_company_id = c2.id ORDER BY c1.id ASC";
+// Main Query: Hanya Level 1
+$sql = "SELECT * FROM companies WHERE level = 1 ORDER BY id DESC";
 $result = $conn->query($sql);
-$companyTree = [];
-if ($result->num_rows > 0) {
-    while($row = $result->fetch_assoc()) {
-        $pid = $row['parent_company_id'] ? $row['parent_company_id'] : 0;
-        $companyTree[$pid][] = $row;
-    }
-}
-
-// Render Function
-function renderCompanyRows($parentId, $tree, $userMap) {
-    if (!isset($tree[$parentId])) return;
-
-    foreach ($tree[$parentId] as $row) {
-        $users = isset($userMap[$row['id']]) ? $userMap[$row['id']] : [];
-        $padding = ($row['level'] - 1) * 36; 
-        
-        // Styling based on level
-        $iconClass = match($row['level']) {
-            1 => 'ph-buildings text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30',
-            2 => 'ph-factory text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30',
-            3 => 'ph-storefront text-amber-600 bg-amber-50 dark:bg-amber-900/30',
-            default => 'ph-building text-slate-500 bg-slate-50'
-        };
-        ?>
-        <tr class="company-row group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-100 dark:border-slate-800"
-            data-name="<?= strtolower($row['company_name']) ?>" 
-            data-code="<?= strtolower($row['partner_code']) ?>"
-            data-level="<?= $row['level'] ?>">
-            
-            <td class="px-6 py-4 text-xs font-mono text-slate-400">#<?= str_pad($row['id'], 3, '0', STR_PAD_LEFT) ?></td>
-            
-            <td class="px-6 py-4">
-                <div class="flex items-center" style="padding-left: <?= $padding ?>px;">
-                    <?php if ($row['level'] > 1): ?>
-                        <div class="text-slate-300 dark:text-slate-600 mr-3 flex items-center">
-                            <i class="ph ph-arrow-elbow-down-right text-xl"></i>
-                        </div>
-                    <?php endif; ?>
-                    
-                    <div class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-xl border border-slate-100 dark:border-slate-700 flex items-center justify-center shadow-sm <?= explode(' ', $iconClass)[1] . ' ' . explode(' ', $iconClass)[2] ?>">
-                            <i class="ph <?= explode(' ', $iconClass)[0] ?> text-xl"></i>
-                        </div>
-                        <div>
-                            <p class="text-sm font-bold text-slate-800 dark:text-white"><?= htmlspecialchars($row['company_name']) ?></p>
-                            <?php if($row['parent_name']): ?>
-                                <p class="text-[10px] text-slate-400">Sub of: <?= htmlspecialchars($row['parent_name']) ?></p>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                </div>
-            </td>
-
-            <td class="px-6 py-4">
-                <?php if(!empty($users)): ?>
-                    <div class="flex -space-x-2 overflow-visible">
-                        <?php foreach($users as $usr): $initial = strtoupper(substr($usr['username'], 0, 1)); ?>
-                        <div class="relative group/tooltip">
-                            <div class="h-8 w-8 rounded-full ring-2 ring-white dark:ring-slate-900 bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-300 cursor-help shadow-sm">
-                                <?= $initial ?>
-                            </div>
-                            <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max hidden group-hover/tooltip:block z-50">
-                                <div class="bg-slate-800 text-white text-xs rounded px-2 py-1 shadow-lg">
-                                    <p class="font-bold"><?= $usr['username'] ?></p>
-                                    <p class="opacity-80"><?= $usr['email'] ?></p>
-                                </div>
-                                <div class="w-2 h-2 bg-slate-800 rotate-45 absolute -bottom-1 left-1/2 -translate-x-1/2"></div>
-                            </div>
-                        </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php else: ?>
-                    <span class="text-xs text-slate-400 italic opacity-50">Unassigned</span>
-                <?php endif; ?>
-            </td>
-
-            <td class="px-6 py-4">
-                <span class="font-mono text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-700">
-                    <?= htmlspecialchars($row['partner_code']) ?>
-                </span>
-            </td>
-            
-            <td class="px-6 py-4 text-center">
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold border 
-                    <?= $row['level'] == 1 ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 
-                       ($row['level'] == 2 ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-50 text-slate-600 border-slate-100') ?>">
-                    Level <?= $row['level'] ?>
-                </span>
-            </td>
-            
-            <td class="px-6 py-4 text-right">
-                <div class="flex items-center justify-end gap-1">
-                    <button onclick="showDetail(<?= $row['id'] ?>)" 
-                            class="w-8 h-8 flex items-center justify-center rounded-lg text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors"
-                            title="View Details & Hierarchy">
-                        <i class="ph ph-eye text-lg"></i>
-                    </button>
-
-                    <?php if($row['level'] < 4): ?>
-                    <button onclick="openModal('sub', '<?= $row['id'] ?>', '<?= htmlspecialchars($row['company_name']) ?>', '<?= $row['level'] ?>')" 
-                            class="w-8 h-8 flex items-center justify-center rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition-colors"
-                            title="Add Child Company">
-                        <i class="ph ph-plus-circle text-lg"></i>
-                    </button>
-                    <?php endif; ?>
-
-                    <a href="manage-client.php?delete_id=<?= $row['id'] ?>" 
-                       onclick="return confirm('Deleting this company will delete all its children hierarchy! Continue?');" 
-                       class="w-8 h-8 flex items-center justify-center rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
-                       title="Delete">
-                        <i class="ph ph-trash text-lg"></i>
-                    </a>
-                </div>
-            </td>
-        </tr>
-        <?php 
-        renderCompanyRows($row['id'], $tree, $userMap);
-    }
-}
 ?>
 
 <!DOCTYPE html>
@@ -233,6 +106,11 @@ function renderCompanyRows($parentId, $tree, $userMap) {
     <style>
         .modal-anim { transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
         .hidden-row { display: none !important; }
+        /* Custom Scrollbar for Modal */
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
+        .dark .custom-scroll::-webkit-scrollbar-thumb { background-color: #475569; }
     </style>
 </head>
 <body class="bg-[#F8FAFC] dark:bg-darkbg text-slate-600 dark:text-slate-300 font-sans antialiased">
@@ -245,34 +123,15 @@ function renderCompanyRows($parentId, $tree, $userMap) {
             <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
                 <div class="max-w-7xl mx-auto">
                     
-                    <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-6 gap-4">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                         <div>
                             <h1 class="text-2xl font-bold text-slate-800 dark:text-white tracking-tight">Client Management</h1>
-                            <p class="text-sm text-slate-500 mt-1">Organize company hierarchy and partner configurations.</p>
+                            <p class="text-sm text-slate-500 mt-1">Manage root companies and their structures.</p>
                         </div>
-                        
-                        <div class="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-                            <div class="relative w-full sm:w-64">
-                                <i class="ph ph-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-lg"></i>
-                                <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Search company..." class="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all">
-                            </div>
-
-                            <div class="relative w-full sm:w-40">
-                                <i class="ph ph-funnel absolute left-3 top-2.5 text-slate-400 text-lg"></i>
-                                <select id="levelFilter" onchange="filterTable()" class="w-full pl-10 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none appearance-none cursor-pointer">
-                                    <option value="all">All Levels</option>
-                                    <option value="1">Level 1 (Root)</option>
-                                    <option value="2">Level 2</option>
-                                    <option value="3">Level 3</option>
-                                </select>
-                                <i class="ph ph-caret-down absolute right-3 top-3 text-slate-400 pointer-events-none"></i>
-                            </div>
-
-                            <button onclick="openModal('root')" class="bg-primary hover:bg-indigo-600 text-white px-5 py-2 rounded-xl shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 transition-all active:scale-95 font-medium border border-transparent whitespace-nowrap">
-                                <i class="ph ph-plus text-lg"></i>
-                                <span>Add Client</span>
-                            </button>
-                        </div>
+                        <button onclick="openModal('root')" class="bg-primary hover:bg-indigo-600 text-white px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 flex items-center gap-2 transition-all active:scale-95 font-medium border border-transparent">
+                            <i class="ph ph-buildings text-lg"></i>
+                            <span>Add New Client</span>
+                        </button>
                     </div>
 
                     <?php if(isset($_GET['msg'])): ?>
@@ -288,27 +147,81 @@ function renderCompanyRows($parentId, $tree, $userMap) {
                                 <thead class="bg-slate-50/80 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 backdrop-blur-sm">
                                     <tr>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider w-20">ID</th>
-                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Company Hierarchy</th>
+                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Company Name</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Assigned Users</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Partner Code</th>
                                         <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center">Level</th>
-                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right w-36">Action</th>
+                                        <th class="px-6 py-4 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right w-24">Detail</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-100 dark:divide-slate-700/50">
                                     <?php 
-                                    if(empty($companyTree)) {
-                                        echo '<tr><td colspan="6" class="p-12 text-center text-slate-400"><i class="ph ph-briefcase text-4xl mb-2 block"></i>No companies found. Create a root client to start.</td></tr>';
+                                    if($result->num_rows == 0) {
+                                        echo '<tr><td colspan="6" class="p-12 text-center text-slate-400"><i class="ph ph-briefcase text-4xl mb-2 block"></i>No companies found.</td></tr>';
                                     } else {
-                                        renderCompanyRows(0, $companyTree, $userMap); 
-                                    }
+                                        while($row = $result->fetch_assoc()): 
+                                            $users = isset($userMap[$row['id']]) ? $userMap[$row['id']] : [];
                                     ?>
+                                    <tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-100 dark:border-slate-800">
+                                        <td class="px-6 py-4 text-xs font-mono text-slate-400">#<?= str_pad($row['id'], 3, '0', STR_PAD_LEFT) ?></td>
+                                        
+                                        <td class="px-6 py-4">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-sm">
+                                                    <i class="ph ph-buildings text-xl"></i>
+                                                </div>
+                                                <div>
+                                                    <p class="text-sm font-bold text-slate-800 dark:text-white"><?= htmlspecialchars($row['company_name']) ?></p>
+                                                    <p class="text-[10px] text-slate-400"><?= $row['pic_name'] ? 'PIC: ' . htmlspecialchars($row['pic_name']) : 'No PIC' ?></p>
+                                                </div>
+                                            </div>
+                                        </td>
+
+                                        <td class="px-6 py-4">
+                                            <?php if(!empty($users)): ?>
+                                                <div class="flex -space-x-2 overflow-visible">
+                                                    <?php foreach($users as $usr): $initial = strtoupper(substr($usr['username'], 0, 1)); ?>
+                                                    <div class="relative group/tooltip">
+                                                        <div class="h-8 w-8 rounded-full ring-2 ring-white dark:ring-slate-900 bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-300 cursor-help shadow-sm">
+                                                            <?= $initial ?>
+                                                        </div>
+                                                        <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max hidden group-hover/tooltip:block z-50">
+                                                            <div class="bg-slate-800 text-white text-xs rounded px-2 py-1 shadow-lg">
+                                                                <p class="font-bold"><?= $usr['username'] ?></p>
+                                                                <p class="opacity-80"><?= $usr['email'] ?></p>
+                                                            </div>
+                                                            <div class="w-2 h-2 bg-slate-800 rotate-45 absolute -bottom-1 left-1/2 -translate-x-1/2"></div>
+                                                        </div>
+                                                    </div>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                            <?php else: ?>
+                                                <span class="text-xs text-slate-400 italic opacity-50">Unassigned</span>
+                                            <?php endif; ?>
+                                        </td>
+
+                                        <td class="px-6 py-4">
+                                            <span class="font-mono text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-700">
+                                                <?= htmlspecialchars($row['partner_code']) ?>
+                                            </span>
+                                        </td>
+                                        
+                                        <td class="px-6 py-4 text-center">
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-indigo-50 text-indigo-600 border-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-400 dark:border-indigo-800">
+                                                Level 1
+                                            </span>
+                                        </td>
+                                        
+                                        <td class="px-6 py-4 text-right">
+                                            <button onclick="showDetail(<?= $row['id'] ?>)" 
+                                                    class="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 hover:text-primary dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300 dark:hover:text-white transition-all shadow-sm">
+                                                View Details
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    <?php endwhile; } ?>
                                 </tbody>
                             </table>
-                            <div id="noResults" class="hidden p-12 text-center text-slate-400">
-                                <i class="ph ph-magnifying-glass text-4xl mb-2 block opacity-50"></i>
-                                <span>No companies match your search.</span>
-                            </div>
                         </div>
                     </div>
 
@@ -317,10 +230,10 @@ function renderCompanyRows($parentId, $tree, $userMap) {
         </div>
     </div>
 
-    <div id="companyModal" class="fixed inset-0 z-50 hidden">
+    <div id="companyModal" class="fixed inset-0 z-[60] hidden">
         <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity opacity-0" id="modalBackdrop" onclick="closeModal()"></div>
         <div class="flex items-center justify-center min-h-screen p-4">
-            <div class="bg-white dark:bg-darkcard w-full max-w-lg rounded-2xl shadow-2xl transform transition-all scale-95 opacity-0 modal-anim flex flex-col relative z-10" id="modalContent">
+            <div class="bg-white dark:bg-darkcard w-full max-w-lg rounded-2xl shadow-2xl transform transition-all scale-95 opacity-0 modal-anim flex flex-col relative z-10 max-h-[90vh]" id="modalContent">
                 <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-darkcard rounded-t-2xl">
                     <div>
                         <h3 id="modalTitle" class="text-lg font-bold text-slate-800 dark:text-white">Add New Client</h3>
@@ -328,11 +241,13 @@ function renderCompanyRows($parentId, $tree, $userMap) {
                     </div>
                     <button onclick="closeModal()" class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 transition-colors"><i class="ph ph-x text-lg"></i></button>
                 </div>
-                <form method="POST" class="p-6">
+                
+                <form method="POST" class="flex-1 overflow-y-auto custom-scroll p-6">
                     <input type="hidden" name="add_company" value="1">
                     <input type="hidden" name="parent_id" id="inputIdParent">
                     <input type="hidden" name="parent_level" id="inputIdLevel">
-                    <div class="space-y-4">
+
+                    <div class="space-y-5">
                         <div id="parentInfoBox" class="hidden p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 rounded-xl flex items-center gap-3">
                             <div class="p-2 bg-white dark:bg-indigo-900/50 rounded-lg text-indigo-600 dark:text-indigo-400"><i class="ph ph-arrow-elbow-down-right text-lg"></i></div>
                             <div>
@@ -340,15 +255,51 @@ function renderCompanyRows($parentId, $tree, $userMap) {
                                 <p id="parentNameDisplay" class="text-sm font-bold text-slate-800 dark:text-white">PT Parent</p>
                             </div>
                         </div>
+
                         <div>
-                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Company Name</label>
-                            <input type="text" name="company_name" required class="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all dark:text-white" placeholder="e.g. PT Maju Jaya">
+                            <h4 class="text-xs font-bold uppercase text-slate-400 mb-3">Company Information</h4>
+                            <div class="grid grid-cols-1 gap-4">
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5">Company Name</label>
+                                    <input type="text" name="company_name" required class="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all dark:text-white" placeholder="e.g. PT Maju Jaya">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5">Partner Code</label>
+                                    <input type="text" name="partner_code" required class="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all dark:text-white" placeholder="e.g. IDN001">
+                                </div>
+                            </div>
                         </div>
+
                         <div>
-                            <label class="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1.5">Partner Code</label>
-                            <input type="text" name="partner_code" required class="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all dark:text-white" placeholder="e.g. IDN001">
+                            <h4 class="text-xs font-bold uppercase text-slate-400 mb-3 pt-2 border-t border-slate-100 dark:border-slate-800">PIC Information</h4>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5">PIC Name</label>
+                                    <div class="relative">
+                                        <i class="ph ph-user absolute left-3 top-3 text-slate-400"></i>
+                                        <input type="text" name="pic_name" class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all dark:text-white" placeholder="Full Name">
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5">Email</label>
+                                        <div class="relative">
+                                            <i class="ph ph-envelope absolute left-3 top-3 text-slate-400"></i>
+                                            <input type="email" name="pic_email" class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all dark:text-white" placeholder="Email">
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5">Phone</label>
+                                        <div class="relative">
+                                            <i class="ph ph-phone absolute left-3 top-3 text-slate-400"></i>
+                                            <input type="text" name="pic_phone" class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm focus:bg-white dark:focus:bg-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all dark:text-white" placeholder="0812...">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
+
                     <div class="mt-8 flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
                         <button type="button" onclick="closeModal()" class="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-sm">Cancel</button>
                         <button type="submit" class="px-6 py-2.5 rounded-xl bg-primary hover:bg-indigo-600 text-white font-bold shadow-lg shadow-indigo-500/30 transition-all active:scale-95 text-sm flex items-center gap-2"><i class="ph ph-check-circle text-lg"></i> Save Client</button>
@@ -361,17 +312,22 @@ function renderCompanyRows($parentId, $tree, $userMap) {
     <div id="detailModal" class="fixed inset-0 z-50 hidden">
         <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity opacity-0" id="detailBackdrop" onclick="closeDetail()"></div>
         <div class="flex items-center justify-center min-h-screen p-4">
-            <div class="bg-white dark:bg-darkcard w-full max-w-md rounded-2xl shadow-2xl transform transition-all scale-95 opacity-0 modal-anim flex flex-col relative z-10" id="detailContent">
+            <div class="bg-white dark:bg-darkcard w-full max-w-2xl rounded-2xl shadow-2xl transform transition-all scale-95 opacity-0 modal-anim flex flex-col relative z-10 max-h-[90vh]" id="detailContent">
                 
-                <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                    <h3 class="text-lg font-bold text-slate-800 dark:text-white">Company Details</h3>
-                    <button onclick="closeDetail()" class="text-slate-400 hover:text-slate-600"><i class="ph ph-x text-lg"></i></button>
+                <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50 rounded-t-2xl">
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-800 dark:text-white">Company Details</h3>
+                        <p class="text-xs text-slate-500">Manage structure and PIC information.</p>
+                    </div>
+                    <button onclick="closeDetail()" class="w-8 h-8 flex items-center justify-center rounded-full bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-600 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors">
+                        <i class="ph ph-x text-lg"></i>
+                    </button>
                 </div>
 
-                <div class="p-6" id="detailBody">
-                    <div class="flex flex-col items-center justify-center py-8 text-slate-400">
-                        <i class="ph ph-spinner animate-spin text-3xl mb-2"></i>
-                        <span class="text-sm">Loading details...</span>
+                <div class="flex-1 overflow-y-auto custom-scroll p-6" id="detailBody">
+                    <div class="flex flex-col items-center justify-center py-12 text-slate-400">
+                        <i class="ph ph-spinner animate-spin text-3xl mb-2 text-primary"></i>
+                        <span class="text-sm">Fetching company data...</span>
                     </div>
                 </div>
             </div>
@@ -386,6 +342,9 @@ function renderCompanyRows($parentId, $tree, $userMap) {
         const parentInfoBox = document.getElementById('parentInfoBox');
         
         function openModal(mode, parentId = '', parentName = '', parentLevel = '') {
+            // Jika buka dari detail, tutup detail dulu (opsional, tp lebih bersih)
+            // Tapi user minta "di menu details juga bisa menambahkan", jadi kita tumpuk saja (z-index diatur)
+            
             modal.classList.remove('hidden');
             setTimeout(() => {
                 modalBackdrop.classList.remove('opacity-0');
@@ -416,33 +375,7 @@ function renderCompanyRows($parentId, $tree, $userMap) {
             setTimeout(() => { modal.classList.add('hidden'); }, 300);
         }
 
-        // --- 2. SEARCH & FILTER ---
-        function filterTable() {
-            let input = document.getElementById("searchInput").value.toLowerCase();
-            let levelFilter = document.getElementById("levelFilter").value;
-            let rows = document.querySelectorAll(".company-row");
-            let hasVisible = false;
-
-            rows.forEach(row => {
-                let name = row.getAttribute("data-name");
-                let code = row.getAttribute("data-code");
-                let level = row.getAttribute("data-level");
-
-                let matchSearch = name.includes(input) || code.includes(input);
-                let matchLevel = (levelFilter === "all") || (level === levelFilter);
-
-                if (matchSearch && matchLevel) {
-                    row.classList.remove("hidden-row");
-                    hasVisible = true;
-                } else {
-                    row.classList.add("hidden-row");
-                }
-            });
-
-            document.getElementById("noResults").style.display = hasVisible ? "none" : "block";
-        }
-
-        // --- 3. DETAIL MODAL (AJAX) ---
+        // --- 2. DETAIL MODAL (AJAX) ---
         const detailModal = document.getElementById('detailModal');
         const detailBackdrop = document.getElementById('detailBackdrop');
         const detailContent = document.getElementById('detailContent');
@@ -456,52 +389,91 @@ function renderCompanyRows($parentId, $tree, $userMap) {
                 detailContent.classList.add('scale-100', 'opacity-100');
             }, 10);
 
-            // Reset Loading
-            detailBody.innerHTML = `
-                <div class="flex flex-col items-center justify-center py-8 text-slate-400">
-                    <i class="ph ph-spinner animate-spin text-3xl mb-2 text-primary"></i>
-                    <span class="text-sm">Fetching company data...</span>
-                </div>`;
-
             // Fetch Data
             fetch(`manage-client.php?action=get_detail&id=${id}`)
                 .then(response => response.json())
                 .then(data => {
-                    let hierarchyHTML = '';
-                    data.hierarchy.forEach((h, index) => {
-                        let isLast = index === data.hierarchy.length - 1;
-                        let color = isLast ? 'text-indigo-600 font-bold' : 'text-slate-500';
-                        hierarchyHTML += `
-                            <div class="flex items-center gap-2 mb-2 last:mb-0">
-                                <span class="px-2 py-0.5 rounded bg-slate-100 text-[10px] border border-slate-200">Lvl ${h.level}</span>
-                                <span class="text-sm ${color}">${h.name}</span>
-                            </div>
-                            ${!isLast ? '<div class="pl-4 border-l-2 border-slate-100 h-3 ml-3"></div>' : ''}
-                        `;
-                    });
+                    let childrenHTML = '';
+                    if(data.children.length > 0) {
+                        data.children.forEach(child => {
+                            childrenHTML += `
+                                <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-8 h-8 rounded bg-white dark:bg-slate-800 flex items-center justify-center text-emerald-600 border border-slate-200 dark:border-slate-700">
+                                            <i class="ph ph-arrow-elbow-down-right"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm font-bold text-slate-800 dark:text-white">${child.company_name}</p>
+                                            <p class="text-[10px] text-slate-400">${child.partner_code} • Lvl ${child.level}</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <button onclick="showDetail(${child.id})" class="text-xs text-blue-600 hover:underline">View</button>
+                                        <a href="manage-client.php?delete_id=${child.id}" onclick="return confirm('Delete this sub-company?')" class="text-xs text-red-500 hover:underline">Delete</a>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        childrenHTML = '<div class="text-center py-4 text-slate-400 text-sm italic">No sub-companies found.</div>';
+                    }
 
+                    // Render Detail View
                     detailBody.innerHTML = `
-                        <div class="mb-6">
-                            <p class="text-xs font-bold uppercase text-slate-400 mb-2">Company Info</p>
-                            <h2 class="text-xl font-bold text-slate-800 dark:text-white">${data.info.company_name}</h2>
-                            <p class="text-sm text-slate-500 font-mono mt-1 bg-slate-50 inline-block px-2 py-1 rounded border">${data.info.partner_code}</p>
+                        <div class="grid grid-cols-2 gap-4 mb-6">
+                            <div class="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl border border-indigo-100 dark:border-indigo-800">
+                                <div class="flex justify-between items-start mb-2">
+                                    <div class="p-2 bg-white dark:bg-indigo-900/50 rounded-lg text-indigo-600"><i class="ph ph-sim-card text-xl"></i></div>
+                                    <span class="text-xs font-bold bg-white/50 px-2 py-1 rounded text-indigo-700">Total SIMs</span>
+                                </div>
+                                <p class="text-2xl font-bold text-slate-800 dark:text-white">${data.sims.total}</p>
+                            </div>
+                            <div class="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-100 dark:border-emerald-800">
+                                <div class="flex justify-between items-start mb-2">
+                                    <div class="p-2 bg-white dark:bg-emerald-900/50 rounded-lg text-emerald-600"><i class="ph ph-broadcast text-xl"></i></div>
+                                    <span class="text-xs font-bold bg-white/50 px-2 py-1 rounded text-emerald-700">Active</span>
+                                </div>
+                                <p class="text-2xl font-bold text-slate-800 dark:text-white">${data.sims.active}</p>
+                            </div>
                         </div>
 
-                        <div class="grid grid-cols-2 gap-4 mb-6">
-                            <div class="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
-                                <p class="text-xs text-indigo-600 font-bold uppercase">Total SIMs</p>
-                                <p class="text-2xl font-bold text-indigo-700">${data.sims.total}</p>
+                        <div class="mb-6 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                            <div class="flex justify-between items-start mb-4">
+                                <div>
+                                    <h2 class="text-lg font-bold text-slate-800 dark:text-white">${data.info.company_name}</h2>
+                                    <span class="text-xs font-mono bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-500">${data.info.partner_code}</span>
+                                </div>
+                                <span class="px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 text-xs font-bold rounded">Level ${data.info.level}</span>
                             </div>
-                            <div class="p-4 bg-emerald-50 rounded-xl border border-emerald-100">
-                                <p class="text-xs text-emerald-600 font-bold uppercase">Active</p>
-                                <p class="text-2xl font-bold text-emerald-700">${data.sims.active}</p>
+                            
+                            <h4 class="text-xs font-bold uppercase text-slate-400 mb-3 border-b border-slate-100 dark:border-slate-700 pb-1">PIC Contact</h4>
+                            <div class="space-y-2 text-sm">
+                                <div class="flex items-center gap-3">
+                                    <i class="ph ph-user text-slate-400"></i>
+                                    <span class="text-slate-700 dark:text-slate-300 font-medium">${data.info.pic_name || '-'}</span>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <i class="ph ph-envelope text-slate-400"></i>
+                                    <span class="text-slate-700 dark:text-slate-300">${data.info.pic_email || '-'}</span>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <i class="ph ph-phone text-slate-400"></i>
+                                    <span class="text-slate-700 dark:text-slate-300 font-mono">${data.info.pic_phone || '-'}</span>
+                                </div>
                             </div>
                         </div>
 
                         <div>
-                            <p class="text-xs font-bold uppercase text-slate-400 mb-3">Hierarchy Structure</p>
-                            <div class="p-4 bg-white border border-slate-100 rounded-xl shadow-sm">
-                                ${hierarchyHTML}
+                            <div class="flex justify-between items-center mb-3">
+                                <h4 class="text-xs font-bold uppercase text-slate-400">Sub-Companies</h4>
+                                ${data.info.level < 4 ? `
+                                <button onclick="openModal('sub', '${data.info.id}', '${data.info.company_name}', '${data.info.level}')" class="text-xs flex items-center gap-1 text-primary font-bold hover:underline">
+                                    <i class="ph ph-plus-circle"></i> Add Sub
+                                </button>` : ''}
+                            </div>
+                            
+                            <div class="space-y-2">
+                                ${childrenHTML}
                             </div>
                         </div>
                     `;
