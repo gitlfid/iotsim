@@ -2,24 +2,33 @@
 include 'config.php';
 checkLogin();
 
-// Access Control
+// --- ACCESS CONTROL: Superadmin & Admin Only ---
 if ($_SESSION['role'] !== 'superadmin' && $_SESSION['role'] !== 'admin') {
     echo "<script>alert('Access Denied'); window.location='dashboard.php';</script>";
     exit();
 }
 
-// --- AJAX HANDLER: GET USER DETAIL & SORTED HIERARCHY ---
+// Helper: Ambil Scope Perusahaan User yang Sedang Login
+$currentUserScope = [];
+if ($_SESSION['role'] !== 'superadmin') {
+    $currentUserScope = getClientIdsForUser($_SESSION['user_id']); 
+    if (empty($currentUserScope) || $currentUserScope === 'NONE') {
+        $currentUserScope = []; 
+    }
+}
+
+// --- AJAX HANDLER: GET USER DETAIL ---
 if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GET['id'])) {
     header('Content-Type: application/json');
     $uid = intval($_GET['id']);
     
-    // 1. Get User Info
+    // 1. User Info
     $stmt = $conn->prepare("SELECT id, username, email, role, is_active, access_all_companies FROM users WHERE id = ?");
     $stmt->bind_param("i", $uid);
     $stmt->execute();
     $userInfo = $stmt->get_result()->fetch_assoc();
 
-    // 2. Get Accessible Companies with Hierarchy Sort
+    // 2. Companies
     $companies = [];
     $isGlobal = false;
 
@@ -27,55 +36,27 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GE
         $isGlobal = true;
     } else {
         $accessIds = getClientIdsForUser($uid); 
-        
         if (!empty($accessIds) && is_array($accessIds)) {
             $ids_str = implode(',', $accessIds);
-            
-            // Ambil semua data mentah dulu (tanpa sorting level di SQL)
-            $res = $conn->query("SELECT id, company_name, partner_code, level, parent_company_id FROM companies WHERE id IN ($ids_str)");
+            // Ambil data untuk disusun hirarkinya
+            $res = $conn->query("SELECT id, company_name, partner_code, level, parent_company_id FROM companies WHERE id IN ($ids_str) ORDER BY id ASC");
             $rawCompanies = [];
             while($row = $res->fetch_assoc()) {
                 $rawCompanies[] = $row;
             }
 
-            // --- LOGIC SORTING HIRARKI (Level 1 -> Anak Level 1 -> dst) ---
-            
-            // 1. Identifikasi Root
-            $roots = [];
-            $accessibleIds = array_column($rawCompanies, 'id');
+            // Logic Hirarki Sederhana untuk Tampilan
+            // Sort by Level agar Level 1 muncul duluan
+            usort($rawCompanies, function($a, $b) {
+                return $a['level'] <=> $b['level'];
+            });
 
-            foreach ($rawCompanies as $comp) {
-                if ($comp['level'] == 1 || !in_array($comp['parent_company_id'], $accessibleIds)) {
-                    $roots[] = $comp;
-                }
+            // Flatten logic visual indent
+            foreach($rawCompanies as $comp) {
+                // Cari level relatif jika parent tidak ada di list
+                $comp['depth'] = ($comp['level'] > 1) ? $comp['level'] - 1 : 0; 
+                $companies[] = $comp;
             }
-
-            usort($roots, function($a, $b) { return strcmp($a['company_name'], $b['company_name']); });
-
-            // 2. Fungsi Rekursif (Flatten Tree)
-            $sortedList = [];
-            
-            $buildTree = function($parents, $allData, $depth = 0) use (&$buildTree, &$sortedList) {
-                foreach ($parents as $parent) {
-                    $parent['depth'] = $depth;
-                    $sortedList[] = $parent;
-
-                    $children = [];
-                    foreach ($allData as $candidate) {
-                        if ($candidate['parent_company_id'] == $parent['id']) {
-                            $children[] = $candidate;
-                        }
-                    }
-
-                    if (!empty($children)) {
-                        usort($children, function($a, $b) { return strcmp($a['company_name'], $b['company_name']); });
-                        $buildTree($children, $allData, $depth + 1);
-                    }
-                }
-            };
-
-            $buildTree($roots, $rawCompanies);
-            $companies = $sortedList;
         }
     }
 
@@ -89,25 +70,44 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GE
 
 // --- HANDLE POST REQUESTS ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    
+    // ADD / EDIT
     if (isset($_POST['action']) && ($_POST['action'] == 'add' || $_POST['action'] == 'edit')) {
         $username = $_POST['username'];
         $email = $_POST['email']; 
         $role = $_POST['role'];
         $user_id = isset($_POST['user_id']) ? $_POST['user_id'] : null;
+        
+        // Security checks
+        if ($_SESSION['role'] !== 'superadmin' && $role === 'superadmin') {
+            header("Location: manage-users.php?msg=Error: Unauthorized role&type=error"); exit;
+        }
+
         $access_all = (isset($_POST['access_all']) && $_SESSION['role'] === 'superadmin') ? 1 : 0;
         $company_ids = ($access_all == 0 && isset($_POST['company_ids'])) ? $_POST['company_ids'] : [];
+
+        // Filter scope for Admin
+        if ($_SESSION['role'] !== 'superadmin') {
+            $company_ids = array_intersect($company_ids, $currentUserScope);
+            if (empty($company_ids) && $access_all == 0) {
+                header("Location: manage-users.php?msg=Error: Assign at least one company&type=error"); exit;
+            }
+        }
 
         if ($_POST['action'] == 'add') {
             $check = $conn->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
             $check->bind_param("ss", $username, $email);
             $check->execute();
             if ($check->get_result()->num_rows > 0) {
-                header("Location: manage-users.php?msg=Error: Username or Email already exists&type=error"); exit;
+                header("Location: manage-users.php?msg=Error: Username/Email exists&type=error"); exit;
             }
+
             $plain_password = !empty($_POST['password']) ? $_POST['password'] : generateStrongPassword(8);
             $hashed_password = password_hash($plain_password, PASSWORD_DEFAULT);
+            
             $stmt = $conn->prepare("INSERT INTO users (username, email, password, role, is_active, access_all_companies, force_reset) VALUES (?, ?, ?, ?, 1, ?, 1)");
             $stmt->bind_param("ssssi", $username, $email, $hashed_password, $role, $access_all);
+            
             if ($stmt->execute()) {
                 $new_user_id = $stmt->insert_id;
                 if($access_all == 0 && !empty($company_ids)){
@@ -117,22 +117,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         $stmt_comp->execute();
                     }
                 }
-                $subject = "Welcome to IoT Platform - Account Credentials";
-                $body = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'><h2 style='color: #4F46E5;'>Welcome, $username!</h2><p>Your account has been created successfully.</p><div style='background-color: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0;'><p style='margin: 5px 0;'><strong>Username:</strong> $username</p><p style='margin: 5px 0;'><strong>Email:</strong> $email</p><p style='margin: 5px 0;'><strong>Password:</strong> <span style='font-family: monospace; background: #e0e7ff; color: #4338ca; padding: 2px 6px; rounded: 4px;'>$plain_password</span></p></div><p>Please login and change your password immediately.</p></div>";
+                $subject = "Account Created";
+                $body = "Welcome $username. Password: $plain_password";
                 sendEmail($email, $subject, $body);
-                header("Location: manage-users.php?msg=User created. Email sent.&type=success"); exit;
+                header("Location: manage-users.php?msg=User created&type=success"); exit;
             }
         } 
         else if ($_POST['action'] == 'edit') {
             $stmt = $conn->prepare("UPDATE users SET username=?, email=?, role=?, access_all_companies=? WHERE id=?");
             $stmt->bind_param("sssii", $username, $email, $role, $access_all, $user_id);
             $stmt->execute();
+
             if (!empty($_POST['password'])) {
                 $new_pass = password_hash($_POST['password'], PASSWORD_DEFAULT);
                 $stmt = $conn->prepare("UPDATE users SET password=? WHERE id=?");
                 $stmt->bind_param("si", $new_pass, $user_id);
                 $stmt->execute();
             }
+
             $conn->query("DELETE FROM user_companies WHERE user_id = $user_id");
             if($access_all == 0 && !empty($company_ids)){
                 $stmt_comp = $conn->prepare("INSERT INTO user_companies (user_id, company_id) VALUES (?, ?)");
@@ -141,47 +143,51 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $stmt_comp->execute();
                 }
             }
-            header("Location: manage-users.php?msg=User updated successfully&type=success"); exit;
+            header("Location: manage-users.php?msg=User updated&type=success"); exit;
         }
     }
+
+    // RESET PASSWORD
     if (isset($_POST['action']) && $_POST['action'] == 'reset_password') {
         $uid = $_POST['user_id'];
         $qUser = $conn->query("SELECT username, email FROM users WHERE id='$uid'");
         if ($qUser->num_rows > 0) {
             $uData = $qUser->fetch_assoc();
-            $new_password = generateStrongPassword(10); 
-            $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
-            $conn->query("UPDATE users SET password='$hashed_password', force_reset=1 WHERE id='$uid'");
-            $subject = "Password Reset - IoT Platform";
-            $body = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;'><h2 style='color: #F59E0B;'>Password Reset</h2><p>Hello <strong>$username</strong>,</p><p>Your password has been reset by Administrator.</p><div style='background-color: #FFFBEB; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #FEF3C7;'><p style='margin: 5px 0; color: #92400E;'><strong>New Password:</strong></p><p style='margin: 5px 0; font-size: 18px; font-family: monospace; font-weight: bold; color: #D97706;'>$new_password</p></div><p>Use this password to login.</p></div>";
-            sendEmail($email, $subject, $body);
-            header("Location: manage-users.php?msg=New password sent to email&type=success"); exit;
+            $new_pass = generateStrongPassword(10); 
+            $hash = password_hash($new_pass, PASSWORD_DEFAULT);
+            $conn->query("UPDATE users SET password='$hash', force_reset=1 WHERE id='$uid'");
+            sendEmail($uData['email'], "Password Reset", "New Password: $new_pass");
+            header("Location: manage-users.php?msg=Password reset sent&type=success"); exit;
         }
     }
+
+    // TOGGLE STATUS
     if (isset($_POST['action']) && $_POST['action'] == 'toggle_status') {
         $uid = $_POST['user_id'];
         $status = $_POST['status']; 
         $conn->query("UPDATE users SET is_active = $status WHERE id = $uid");
         echo json_encode(['status'=>'success']); exit;
     }
+
+    // DELETE USER
     if (isset($_POST['action']) && $_POST['action'] == 'delete') {
         $uid = $_POST['user_id'];
         if ($uid != $_SESSION['user_id']) {
             $conn->query("DELETE FROM users WHERE id = $uid");
             $conn->query("DELETE FROM user_companies WHERE user_id = $uid");
         }
-        header("Location: manage-users.php?msg=User deleted successfully&type=success"); exit;
+        header("Location: manage-users.php?msg=User deleted&type=success"); exit;
     }
 }
 
-// --- FETCH DATA (View) ---
+// --- FETCH DATA FOR VIEW ---
+// 1. Companies Tree (Untuk Modal Add/Edit)
 $raw_companies = [];
 if ($_SESSION['role'] === 'superadmin') {
     $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
 } else {
-    $scope = getClientIdsForUser($_SESSION['user_id']);
-    if (!empty($scope)) {
-        $ids_str = implode(',', $scope);
+    if (!empty($currentUserScope)) {
+        $ids_str = implode(',', $currentUserScope);
         $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies WHERE id IN ($ids_str) ORDER BY company_name ASC");
     } else {
         $res = false;
@@ -195,6 +201,7 @@ if ($res) {
     }
 }
 
+// Build Tree
 $tree = [];
 foreach ($raw_companies as $id => &$node) {
     if ($node['parent_id'] && isset($raw_companies[$node['parent_id']])) {
@@ -214,6 +221,7 @@ function flattenTree($branch, &$output, $depth = 0) {
 }
 flattenTree($tree, $companies); 
 
+// 2. Users List (Filtered)
 $users = [];
 $currentUserScope = getClientIdsForUser($_SESSION['user_id']);
 
@@ -471,7 +479,7 @@ function getLevelBadge($lvl) {
                         <h3 id="modalTitle" class="text-lg font-bold text-slate-800 dark:text-white">Add New User</h3>
                         <p class="text-xs text-slate-500 mt-0.5">Configure access and credentials.</p>
                     </div>
-                    <button onclick="closeModal()" class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 transition-colors"><i class="ph ph-x text-lg"></i></button>
+                    <button onclick="closeModal()" class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 transition-colors"><i class="ph ph-x text-lg"></i></button>
                 </div>
                 <div class="overflow-y-auto p-6 custom-scrollbar">
                     <form method="POST" id="userForm">
