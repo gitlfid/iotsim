@@ -25,12 +25,12 @@
         <div class="flex items-center gap-3 2xsm:gap-6">
             <ul class="flex items-center gap-2">
                 
-                <li>
+                <!-- <li>
                     <button id="darkModeToggle" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-500 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 transition-all">
                         <i class="ph ph-moon text-xl dark:hidden"></i>
                         <i class="ph ph-sun text-xl hidden dark:block"></i>
                     </button>
-                </li>
+                </li> -->
 
                 <!-- <li class="relative">
                     <button id="notificationBtn" class="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-500 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 transition-all">
