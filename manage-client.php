@@ -21,9 +21,8 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_detail' && isset($_GET['id
     $info = $conn->query($sql)->fetch_assoc();
 
     // 2. Get Recursive Children
-    // Mengambil semua data diurutkan berdasarkan ID ASC agar Sub-company juga berurutan
     $allCompanies = [];
-    $resAll = $conn->query("SELECT * FROM companies ORDER BY id ASC");
+    $resAll = $conn->query("SELECT * FROM companies ORDER BY company_name ASC");
     while($row = $resAll->fetch_assoc()) {
         $allCompanies[] = $row;
     }
@@ -137,9 +136,6 @@ if (!function_exists('countTotalSubs')) {
     }
 }
 
-// -----------------------------------------------------------
-// PERBAIKAN: ORDER BY ID ASC (Agar berurutan 1, 2, 3...)
-// -----------------------------------------------------------
 $sql = "SELECT * FROM companies WHERE level = 1 ORDER BY id ASC";
 $result = $conn->query($sql);
 ?>
@@ -405,6 +401,8 @@ $result = $conn->query($sql);
             </div>
         </div>
     </div>
+
+    <script src="assets/js/main.js"></script>
 
     <script>const currentUserRole = '<?= $_SESSION['role'] ?>';</script>
 
