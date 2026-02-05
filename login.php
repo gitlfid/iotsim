@@ -14,41 +14,43 @@ if (isset($_SESSION['user_id'])) {
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // Ambil input (bisa berupa email atau username)
-    $login_input = $_POST['login_input']; 
-    $password = $_POST['password'];
+    // FIX: Gunakan 'login_input' atau fallback ke 'email'/'username' untuk mencegah error undefined key
+    $login_input = $_POST['login_input'] ?? $_POST['email'] ?? $_POST['username'] ?? ''; 
+    $password = $_POST['password'] ?? '';
 
-    // UPDATE QUERY: Cek apakah input cocok dengan email ATAU username
-    $stmt = $conn->prepare("SELECT id, username, password, role, company_id, force_reset FROM users WHERE email = ? OR username = ?");
-    
-    // Bind parameter dua kali untuk masing-masing tanda tanya (?)
-    $stmt->bind_param("ss", $login_input, $login_input);
-    $stmt->execute();
-    $result = $stmt->get_result();
-
-    if ($result->num_rows > 0) {
-        $row = $result->fetch_assoc();
-        
-        if (password_verify($password, $row['password'])) {
-            // Set Session
-            $_SESSION['user_id'] = $row['id'];
-            $_SESSION['username'] = $row['username']; // Tetap simpan username asli di session
-            $_SESSION['role'] = $row['role'];
-            $_SESSION['company_id'] = $row['company_id'];
-            $_SESSION['force_reset'] = $row['force_reset']; 
-
-            // Cek Arah Redirect
-            if ($row['force_reset'] == 1) {
-                header("Location: reset-password.php");
-            } else {
-                header("Location: dashboard.php");
-            }
-            exit();
-        } else {
-            $error = "Invalid credential or password!";
-        }
+    if (empty($login_input) || empty($password)) {
+        $error = "Please enter both username/email and password.";
     } else {
-        $error = "Account not found!";
+        // QUERY: Cek apakah input cocok dengan email ATAU username
+        $stmt = $conn->prepare("SELECT id, username, password, role, company_id, force_reset FROM users WHERE email = ? OR username = ?");
+        $stmt->bind_param("ss", $login_input, $login_input);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result->num_rows > 0) {
+            $row = $result->fetch_assoc();
+            
+            if (password_verify($password, $row['password'])) {
+                // Set Session
+                $_SESSION['user_id'] = $row['id'];
+                $_SESSION['username'] = $row['username'];
+                $_SESSION['role'] = $row['role'];
+                $_SESSION['company_id'] = $row['company_id'];
+                $_SESSION['force_reset'] = $row['force_reset']; 
+
+                // Cek Arah Redirect
+                if ($row['force_reset'] == 1) {
+                    header("Location: reset-password.php");
+                } else {
+                    header("Location: dashboard.php");
+                }
+                exit();
+            } else {
+                $error = "Invalid credential or password!";
+            }
+        } else {
+            $error = "Account not found!";
+        }
     }
 }
 ?>
@@ -126,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             <label class="block text-sm font-semibold text-slate-700 dark:text-slate-200">
                                 Password
                             </label>
-                            </div>
+                        </div>
                         <div class="relative">
                             <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                                 <i class="ph ph-lock-key text-xl text-slate-400"></i>
