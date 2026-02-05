@@ -40,33 +40,26 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GE
 
             // --- LOGIC SORTING HIRARKI (Level 1 -> Anak Level 1 -> dst) ---
             
-            // 1. Identifikasi mana yang menjadi "Root" dalam konteks list ini
-            // (Root adalah Level 1, ATAU perusahaan yang parent-nya TIDAK ada di list akses ini)
+            // 1. Identifikasi Root
             $roots = [];
             $accessibleIds = array_column($rawCompanies, 'id');
 
             foreach ($rawCompanies as $comp) {
-                // Jika Level 1 ATAU Parentnya tidak ada di list accessibleIds
                 if ($comp['level'] == 1 || !in_array($comp['parent_company_id'], $accessibleIds)) {
                     $roots[] = $comp;
                 }
             }
 
-            // Sort Roots by Name
             usort($roots, function($a, $b) { return strcmp($a['company_name'], $b['company_name']); });
 
-            // 2. Fungsi Rekursif untuk menyusun urutan (Flatten Tree)
+            // 2. Fungsi Rekursif (Flatten Tree)
             $sortedList = [];
             
-            // Menggunakan closure untuk rekursi (membutuhkan PHP 5.3+)
-            // $allData adalah $rawCompanies
             $buildTree = function($parents, $allData, $depth = 0) use (&$buildTree, &$sortedList) {
                 foreach ($parents as $parent) {
-                    // Tambahkan parent ke list final
                     $parent['depth'] = $depth;
                     $sortedList[] = $parent;
 
-                    // Cari anak dari parent ini yang ada di $allData
                     $children = [];
                     foreach ($allData as $candidate) {
                         if ($candidate['parent_company_id'] == $parent['id']) {
@@ -74,16 +67,13 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GE
                         }
                     }
 
-                    // Jika ada anak, proses anak tersebut (depth + 1)
                     if (!empty($children)) {
-                        // Sort anak by Name
                         usort($children, function($a, $b) { return strcmp($a['company_name'], $b['company_name']); });
                         $buildTree($children, $allData, $depth + 1);
                     }
                 }
             };
 
-            // Jalankan fungsi penyusun
             $buildTree($roots, $rawCompanies);
             $companies = $sortedList;
         }
@@ -97,8 +87,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_user_detail' && isset($_GE
     exit();
 }
 
-// --- HANDLE POST REQUESTS (Create/Edit/Delete/Reset) ---
-// (Logic Post Request Tetap Sama, tidak diubah)
+// --- HANDLE POST REQUESTS ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['action']) && ($_POST['action'] == 'add' || $_POST['action'] == 'edit')) {
         $username = $_POST['username'];
@@ -185,7 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// --- FETCH DATA FOR TABLE VIEW ---
+// --- FETCH DATA (View) ---
 $raw_companies = [];
 if ($_SESSION['role'] === 'superadmin') {
     $res = $conn->query("SELECT id, company_name, level, parent_id FROM companies ORDER BY company_name ASC");
@@ -306,10 +295,11 @@ function getLevelBadge($lvl) {
     </style>
 </head>
 <body class="bg-[#F8FAFC] dark:bg-darkbg text-slate-600 dark:text-slate-300 font-sans antialiased">
-    <div class="flex h-screen overflow-hidden">
+    
+    <div class="flex h-screen">
         <?php include 'includes/sidebar.php'; ?>
         
-        <div class="flex-1 flex flex-col overflow-hidden relative">
+        <div class="flex-1 flex flex-col overflow-hidden">
             <?php include 'includes/header.php'; ?>
             
             <main class="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
@@ -328,7 +318,9 @@ function getLevelBadge($lvl) {
 
                     <?php if(isset($_GET['msg'])): $isError = (isset($_GET['type']) && $_GET['type']=='error'); ?>
                         <div class="mb-6 p-4 rounded-xl border flex items-center gap-3 <?= $isError ? 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800' : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800' ?> animate-fade-in-up">
-                            <div class="p-2 bg-white dark:bg-darkcard rounded-full shadow-sm"><i class="ph <?= $isError ? 'ph-warning' : 'ph-check-circle' ?> text-xl"></i></div>
+                            <div class="p-2 bg-white dark:bg-darkcard rounded-full shadow-sm">
+                                <i class="ph <?= $isError ? 'ph-warning' : 'ph-check-circle' ?> text-xl"></i> 
+                            </div>
                             <span class="font-medium text-sm"><?= htmlspecialchars($_GET['msg']) ?></span>
                         </div>
                     <?php endif; ?>
