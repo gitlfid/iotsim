@@ -18,7 +18,7 @@ jobs:
         run: |
           rsync -av --delete --no-o --no-g --no-p --no-t \
           --exclude '.git' --exclude '.github' \
-          ./ /www/wwwroot/iotsim/
+          ./ /www/wwwroot/iotsimstag/
 
       # Deploy ke PRODUCTION
       - name: Deploy Production
@@ -26,4 +26,4 @@ jobs:
         run: |
           rsync -av --delete --no-o --no-g --no-p --no-t \
           --exclude '.git' --exclude '.github' \
-          ./ /www/wwwroot/iotsimstag/
+          ./ /www/wwwroot/iotsim/
