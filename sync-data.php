@@ -4,7 +4,7 @@ checkLogin();
 
 // --- ACCESS CONTROL ---
 if ($_SESSION['role'] !== 'superadmin') {
-    echo "<script>alert('Access Denied. IT Team Only.'); window.location='sim-list.php';</script>";
+    echo "<script>alert('Access Denied. IT Team Only.'); window.location='sim-list';</script>";
     exit();
 }
 
@@ -318,9 +318,11 @@ if (isset($_POST['action'])) {
             loadHistory();
         });
 
+        // FIX: URL diganti dari 'sync-data.php' menjadi 'sync-data' (tanpa .php) agar tidak terkena redirect 301 yang menghilangkan POST data
+
         // 1. Load Companies
         function loadCompanies() {
-            fetch('sync-data.php', { method: 'POST', body: new URLSearchParams({action: 'get_companies'}) })
+            fetch('sync-data', { method: 'POST', body: new URLSearchParams({action: 'get_companies'}) })
             .then(r => r.json())
             .then(res => {
                 const list = document.getElementById('companyList');
@@ -390,7 +392,7 @@ if (isset($_POST['action'])) {
             fd.append('action', 'start_session');
             fd.append('names', names);
 
-            fetch('sync-data.php', { method: 'POST', body: fd })
+            fetch('sync-data', { method: 'POST', body: fd })
             .then(r => r.json())
             .then(res => {
                 if(res.status === 'success') {
@@ -417,7 +419,7 @@ if (isset($_POST['action'])) {
             fd.append('partner_code', target.code);
             fd.append('sync_id', currentSyncId);
 
-            fetch('sync-data.php', { method: 'POST', body: fd })
+            fetch('sync-data', { method: 'POST', body: fd })
             .then(r => r.json())
             .then(res => {
                 if(res.status === 'success') {
@@ -456,7 +458,7 @@ if (isset($_POST['action'])) {
             fd.append('page', currentPage);
             fd.append('sync_id', currentSyncId);
 
-            fetch('sync-data.php', { method: 'POST', body: fd })
+            fetch('sync-data', { method: 'POST', body: fd })
             .then(r => r.json())
             .then(res => {
                 loadHistory(); // Update counter in table
@@ -473,7 +475,7 @@ if (isset($_POST['action'])) {
             const fd = new FormData();
             fd.append('action', 'finish_session');
             fd.append('sync_id', currentSyncId);
-            fetch('sync-data.php', { method: 'POST', body: fd })
+            fetch('sync-data', { method: 'POST', body: fd })
             .then(() => {
                 updateMonitor("Completed", 100, "All sync tasks finished.");
                 document.getElementById('startBtn').disabled = false;
@@ -493,7 +495,7 @@ if (isset($_POST['action'])) {
         }
 
         function loadHistory() {
-            fetch('sync-data.php', { method: 'POST', body: new URLSearchParams({action: 'get_history'}) })
+            fetch('sync-data', { method: 'POST', body: new URLSearchParams({action: 'get_history'}) })
             .then(r => r.json())
             .then(res => {
                 const tbody = document.getElementById('historyTableBody');
