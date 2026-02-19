@@ -57,9 +57,9 @@ if (!function_exists('hasAccess')) {
                     
                     <?php if(hasAccess('dashboard')): ?>
                     <li>
-                        <a href="dashboard.php" 
-                           class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'dashboard.php') ? $active_link_style : $inactive_link_style; ?>">
-                            <i class="<?php echo getIconClass('dashboard.php', $current_page, 'ph-squares-four'); ?>"></i>
+                        <a href="dashboard" 
+                           class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'dashboard') ? $active_link_style : $inactive_link_style; ?>">
+                            <i class="<?php echo getIconClass('dashboard', $current_page, 'ph-squares-four'); ?>"></i>
                             <span class="group-[.is-collapsed]:hidden whitespace-nowrap">Dashboard</span>
                         </a>
                     </li>
@@ -67,9 +67,9 @@ if (!function_exists('hasAccess')) {
 
                     <?php if(hasAccess('sim_list')): ?>
                     <li>
-                        <a href="sim-list.php" 
-                           class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'sim-list.php' || $current_page == 'sim-detail.php') ? $active_link_style : $inactive_link_style; ?>">
-                            <i class="<?php echo getIconClass('sim-list.php', $current_page, 'ph-sim-card'); ?>"></i>
+                        <a href="sim-list" 
+                           class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'sim-list' || $current_page == 'sim-detail') ? $active_link_style : $inactive_link_style; ?>">
+                            <i class="<?php echo getIconClass('sim-list', $current_page, 'ph-sim-card'); ?>"></i>
                             <span class="group-[.is-collapsed]:hidden whitespace-nowrap">SIM Monitor</span>
                         </a>
                     </li>
@@ -77,9 +77,9 @@ if (!function_exists('hasAccess')) {
 
                     <?php if(hasAccess('sync_data')): ?>
                     <li>
-                        <a href="sync-data.php" 
-                           class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'sync-data.php') ? $active_link_style : $inactive_link_style; ?>">
-                            <i class="<?php echo getIconClass('sync-data.php', $current_page, 'ph-arrows-clockwise'); ?>"></i>
+                        <a href="sync-data" 
+                           class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'sync-data') ? $active_link_style : $inactive_link_style; ?>">
+                            <i class="<?php echo getIconClass('sync-data', $current_page, 'ph-arrows-clockwise'); ?>"></i>
                             <span class="group-[.is-collapsed]:hidden whitespace-nowrap">Sync Data</span>
                         </a>
                     </li>
@@ -96,9 +96,9 @@ if (!function_exists('hasAccess')) {
                     
                     <?php if(hasAccess('manage_client')): ?>
                     <li>
-                        <a href="manage-client.php" 
-                           class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'manage-client.php') ? $active_link_style : $inactive_link_style; ?>">
-                            <i class="<?php echo getIconClass('manage-client.php', $current_page, 'ph-buildings'); ?>"></i>
+                        <a href="manage-client" 
+                           class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'manage-client') ? $active_link_style : $inactive_link_style; ?>">
+                            <i class="<?php echo getIconClass('manage-client', $current_page, 'ph-buildings'); ?>"></i>
                             <span class="group-[.is-collapsed]:hidden whitespace-nowrap">Manage Client</span>
                         </a>
                     </li>
@@ -106,9 +106,9 @@ if (!function_exists('hasAccess')) {
 
                     <?php if(hasAccess('manage_users')): ?>
                     <li>
-                        <a href="manage-users.php" 
-                        class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'manage-users.php') ? $active_link_style : $inactive_link_style; ?>">
-                            <i class="<?php echo getIconClass('manage-users.php', $current_page, 'ph-users-three'); ?>"></i>
+                        <a href="manage-users" 
+                        class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'manage-users') ? $active_link_style : $inactive_link_style; ?>">
+                            <i class="<?php echo getIconClass('manage-users', $current_page, 'ph-users-three'); ?>"></i>
                             <span class="group-[.is-collapsed]:hidden whitespace-nowrap">Manage Users</span>
                         </a>
                     </li>
@@ -116,9 +116,9 @@ if (!function_exists('hasAccess')) {
 
                     <?php if(hasAccess('manage_role')): ?>
                     <li>
-                        <a href="manage-role.php" 
-                        class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'manage-role.php') ? $active_link_style : $inactive_link_style; ?>">
-                            <i class="<?php echo getIconClass('manage-role.php', $current_page, 'ph-shield-check'); ?>"></i>
+                        <a href="manage-role" 
+                        class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'manage-role') ? $active_link_style : $inactive_link_style; ?>">
+                            <i class="<?php echo getIconClass('manage-role', $current_page, 'ph-shield-check'); ?>"></i>
                             <span class="group-[.is-collapsed]:hidden whitespace-nowrap">Manage Roles</span>
                         </a>
                     </li>
@@ -126,9 +126,9 @@ if (!function_exists('hasAccess')) {
 
                     <?php if(hasAccess('manage_role')): ?> 
                     <li>
-                        <a href="manage-smtp.php" 
-                        class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'manage-smtp.php') ? $active_link_style : $inactive_link_style; ?>">
-                            <i class="<?php echo getIconClass('manage-smtp.php', $current_page, 'ph-envelope-simple'); ?>"></i>
+                        <a href="manage-smtp" 
+                        class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'manage-smtp') ? $active_link_style : $inactive_link_style; ?>">
+                            <i class="<?php echo getIconClass('manage-smtp', $current_page, 'ph-envelope-simple'); ?>"></i>
                             <span class="group-[.is-collapsed]:hidden whitespace-nowrap">SMTP Settings</span>
                         </a>
                     </li>
