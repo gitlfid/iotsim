@@ -75,11 +75,11 @@ if (!function_exists('hasAccess')) {
                     </li>
                     <?php endif; ?>
 
-                    <?php if(hasAccess('sync_data')): ?>
+                    <?php if(hasAccess('sync_data.php')): ?>
                     <li>
                         <a href="sync-data" 
                            class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'sync-data.php') ? $active_link_style : $inactive_link_style; ?>">
-                            <i class="<?php echo getIconClass('sync-data', $current_page, 'ph-arrows-clockwise'); ?>"></i>
+                            <i class="<?php echo getIconClass('sync-data.php', $current_page, 'ph-arrows-clockwise'); ?>"></i>
                             <span class="group-[.is-collapsed]:hidden whitespace-nowrap">Sync Data</span>
                         </a>
                     </li>
