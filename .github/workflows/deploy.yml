@@ -2,23 +2,28 @@ name: Deploy to aaPanel Direct
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "staging" ]
 
 jobs:
   deploy:
     runs-on: self-hosted
+
     steps:
-      # 1. Ambil kodingan terbaru dari GitHub
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      # 2. Sinkron file ke folder tujuan
-      - name: Sync Files to Server
+      # Deploy ke STAGING
+      - name: Deploy Staging
+        if: github.ref == 'refs/heads/staging'
         run: |
-          # Tambahan flags:
-          # --no-t : Jangan paksa ubah waktu modifikasi (SOLUSI ERROR ANDA)
-          # --no-o : Jangan ubah owner
-          # --no-g : Jangan ubah group
-          # --no-p : Jangan ubah permission
-          
-          rsync -av --delete --no-o --no-g --no-p --no-t --exclude '.git' --exclude '.github' ./ /www/wwwroot/iotsim/
+          rsync -av --delete --no-o --no-g --no-p --no-t \
+          --exclude '.git' --exclude '.github' \
+          ./ /www/wwwroot/newusagestag/
+
+      # Deploy ke PRODUCTION
+      - name: Deploy Production
+        if: github.ref == 'refs/heads/main'
+        run: |
+          rsync -av --delete --no-o --no-g --no-p --no-t \
+          --exclude '.git' --exclude '.github' \
+          ./ /www/wwwroot/newusage/
