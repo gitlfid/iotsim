@@ -33,7 +33,7 @@ if (!function_exists('hasAccess')) {
 <aside id="sidebar" style="font-family: 'Inter', sans-serif;" class="group fixed left-0 top-0 z-50 flex h-screen w-[280px] flex-col overflow-y-hidden bg-white dark:bg-[#24303F] duration-300 ease-in-out lg:static lg:translate-x-0 -translate-x-full border-r border-slate-100 dark:border-slate-800">
     
     <div class="flex items-center justify-between gap-2 px-6 pt-10 pb-6 lg:pt-12 lg:pb-8">
-        <a href="dashboard.php" class="flex items-center gap-3">
+        <a href="dashboard" class="flex items-center gap-3">
             <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-lg shadow-indigo-500/20">
                 <i class="ph ph-lightning text-2xl"></i>
             </div>
@@ -58,7 +58,7 @@ if (!function_exists('hasAccess')) {
                     <?php if(hasAccess('dashboard')): ?>
                     <li>
                         <a href="dashboard" 
-                           class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'dashboard') ? $active_link_style : $inactive_link_style; ?>">
+                           class="relative flex items-center gap-2.5 rounded-xl px-4 py-3 transition-all group-[.is-collapsed]:justify-center <?php echo ($current_page == 'dashboard.php') ? $active_link_style : $inactive_link_style; ?>">
                             <i class="<?php echo getIconClass('dashboard', $current_page, 'ph-squares-four'); ?>"></i>
                             <span class="group-[.is-collapsed]:hidden whitespace-nowrap">Dashboard</span>
                         </a>
