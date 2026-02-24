@@ -192,7 +192,13 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
             darkMode: 'class',
             theme: {
                 fontFamily: { sans: ['Inter', 'sans-serif'] },
-                extend: { colors: { primary: '#4F46E5', dark: '#1A222C', darkcard: '#24303F', darktext: '#AEB7C0' } }
+                extend: { 
+                    colors: { primary: '#4F46E5', dark: '#1A222C', darkcard: '#24303F', darktext: '#AEB7C0' },
+                    boxShadow: {
+                        'sim': '0 10px 30px -5px rgba(0, 0, 0, 0.08), 0 4px 10px -5px rgba(0, 0, 0, 0.03)',
+                        'sim-dark': '0 10px 30px -5px rgba(0, 0, 0, 0.5), 0 4px 10px -5px rgba(0, 0, 0, 0.3)'
+                    }
+                }
             }
         }
     </script>
@@ -200,6 +206,48 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
         .scroller::-webkit-scrollbar { width: 6px; }
         .scroller::-webkit-scrollbar-thumb { background-color: #CBD5E1; border-radius: 3px; }
         .dark .scroller::-webkit-scrollbar-thumb { background-color: #475569; }
+
+        /* CSS for 3D Flip Card */
+        .perspective-1000 { perspective: 1000px; }
+        .transform-style-3d { transform-style: preserve-3d; }
+        .backface-hidden { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+        .rotate-y-180 { transform: rotateY(180deg); }
+        
+        /* Modern Sim chip styling */
+        .sim-chip {
+            background: linear-gradient(135deg, #eab308 0%, #facc15 50%, #eab308 100%);
+            border-radius: 6px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(0,0,0,0.15);
+            box-shadow: inset 0 1px 2px rgba(255,255,255,0.5);
+        }
+        .sim-chip-lines {
+            position: absolute;
+            inset: 0;
+            background-image: 
+                linear-gradient(rgba(0,0,0,0.1) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,0,0,0.1) 1px, transparent 1px);
+            background-size: 33.33% 33.33%;
+        }
+        .sim-chip-circle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 60%;
+            height: 75%;
+            border: 1px solid rgba(0,0,0,0.1);
+            border-radius: 40%;
+        }
+        
+        /* Modern Barcode pattern */
+        .barcode {
+            background-image: repeating-linear-gradient(to right, #64748B 0, #64748B 2px, transparent 2px, transparent 4px, #64748B 4px, #64748B 5px, transparent 5px, transparent 8px, #64748B 8px, #64748B 11px, transparent 11px, transparent 13px);
+            height: 24px;
+            width: 100%;
+            opacity: 0.85;
+        }
     </style>
 </head>
 <body class="bg-[#F8FAFC] dark:bg-dark text-slate-600 dark:text-darktext antialiased overflow-hidden">
@@ -230,67 +278,71 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
 
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
                         
-                        <div class="lg:col-span-2 bg-white dark:bg-darkcard rounded-xl shadow-soft border border-slate-100 dark:border-slate-800 p-6 flex flex-col justify-between">
-                            
-                            <div class="flex items-center justify-between mb-6">
-                                <h3 class="font-bold text-lg text-slate-800 dark:text-white flex items-center gap-2">
-                                    <i class="ph ph-cpu text-indigo-600"></i> Device Status
-                                </h3>
-                                <div class="flex gap-2">
-                                    <?= getStatusBadge($data['lifecycle'] ?? '0') ?>
+                        <div class="lg:col-span-1 flex items-center justify-center p-2">
+                            <div class="group perspective-1000 w-full max-w-[340px] aspect-[1.58] cursor-pointer" onclick="this.querySelector('.flip-card-inner').classList.toggle('rotate-y-180')">
+                                <div class="flip-card-inner relative w-full h-full transition-transform duration-700 transform-style-3d shadow-sim dark:shadow-sim-dark rounded-3xl">
                                     
-                                    <?= $connectionBadge ?>
-                                </div>
-                            </div>
+                                    <div class="absolute inset-0 backface-hidden bg-white dark:bg-slate-800 rounded-3xl border border-slate-100 dark:border-slate-700 p-5 flex flex-col justify-between overflow-hidden">
+                                        <div class="absolute -bottom-6 -right-6 w-12 h-12 bg-[#F8FAFC] dark:bg-dark transform rotate-45 border-t border-slate-200 dark:border-slate-700 z-10"></div>
+                                        
+                                        <div class="flex justify-end w-full relative z-20">
+                                            <div class="flex items-center gap-1.5 text-slate-400 opacity-60 group-hover:opacity-100 transition-opacity">
+                                                <i class="ph ph-hand-tap text-lg"></i>
+                                                <span class="text-[9px] font-bold tracking-widest uppercase">Click to flip</span>
+                                            </div>
+                                        </div>
 
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
-                                <div>
-                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">IMSI</p>
-                                    <p class="font-mono text-sm font-bold text-slate-800 dark:text-white truncate" title="<?= $data['imsi'] ?>"><?= $data['imsi'] ?? '-' ?></p>
-                                </div>
-                                <div>
-                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">IMEI</p>
-                                    <p class="font-mono text-sm font-bold text-slate-800 dark:text-white truncate" title="<?= $data['imei'] ?>"><?= $data['imei'] ?? '-' ?></p>
-                                </div>
-                                <div>
-                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">Detected IMEI</p>
-                                    <p class="font-mono text-sm font-bold text-slate-800 dark:text-white truncate" title="<?= $data['detectedImei'] ?>"><?= $data['detectedImei'] ?? '-' ?></p>
-                                </div>
-                                <div>
-                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">Expires</p>
-                                    <p class="font-mono text-sm font-bold text-slate-800 dark:text-white truncate"><?= $expireDate ?></p>
-                                </div>
-                            </div>
+                                        <div class="flex-1 flex items-center justify-start mt-1 relative z-20">
+                                            <div class="relative w-[110px] h-[75px] border-[1.5px] border-dashed border-slate-300 dark:border-slate-600 rounded-[10px] p-2 flex items-center justify-center">
+                                                <div class="absolute -bottom-[3px] -right-[3px] w-4 h-4 bg-white dark:bg-slate-800 transform -rotate-45 border-t-[1.5px] border-dashed border-slate-300 dark:border-slate-600"></div>
+                                                
+                                                <div class="sim-chip w-full h-full">
+                                                    <div class="sim-chip-lines"></div>
+                                                    <div class="sim-chip-circle"></div>
+                                                </div>
+                                            </div>
+                                        </div>
 
-                            <div class="border-t border-slate-100 dark:border-slate-700 mb-6 border-dashed"></div>
-
-                            <div class="grid grid-cols-2 md:grid-cols-3 gap-y-6 gap-x-4">
-                                <div>
-                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">Location</p>
-                                    <div class="flex items-center gap-2">
-                                        <?php if($connFlag): ?>
-                                            <img src="<?= $connFlag ?>" alt="Flag" class="h-3.5 w-auto rounded-sm shadow-sm">
-                                        <?php endif; ?>
-                                        <span class="text-sm font-bold text-slate-700 dark:text-white truncate"><?= $connLocation ?></span>
+                                        <div class="mt-auto relative z-20 w-4/5">
+                                            <div class="flex items-center justify-between px-3.5 py-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg w-full border border-emerald-100 dark:border-emerald-800/50">
+                                                <span class="text-[10px] font-extrabold uppercase tracking-widest">Package</span>
+                                                <span class="font-bold font-mono text-[14px]"><?= $totalDisplay ?></span>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                                <div class="col-span-1 md:col-span-2">
-                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">Network Operator</p>
-                                    <span class="text-sm font-bold text-indigo-600 dark:text-indigo-400 truncate block" title="<?= $connNetwork ?>"><?= $connNetwork ?></span>
-                                </div>
-                                <div>
-                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">APN</p>
-                                    <span class="text-sm font-mono text-slate-600 dark:text-slate-300"><?= $connApn ?: '-' ?></span>
-                                </div>
-                                <div>
-                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">Last Session</p>
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold">
-                                        <?= $connLastSessionSize ?>
-                                    </span>
-                                </div>
-                                <div>
-                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">Last Active</p>
-                                    <span class="text-xs font-mono text-slate-600 dark:text-slate-300"><?= $connLastTime ?></span>
+                                    
+                                    <div class="absolute inset-0 backface-hidden rotate-y-180 bg-white dark:bg-slate-800 rounded-3xl border border-slate-100 dark:border-slate-700 p-5 flex flex-col overflow-hidden">
+                                        <div class="absolute -bottom-6 -left-6 w-12 h-12 bg-[#F8FAFC] dark:bg-dark transform -rotate-45 border-t border-slate-200 dark:border-slate-700 z-10"></div>
+                                        
+                                        <div class="flex justify-end w-full mb-3 relative z-20">
+                                            <div class="w-32 flex flex-col items-center opacity-80">
+                                                <div class="barcode"></div>
+                                                <span class="text-[8px] font-mono tracking-[0.15em] text-slate-500 mt-1">NO-SN-DATA</span>
+                                            </div>
+                                        </div>
+
+                                        <div class="flex flex-col gap-2.5 flex-1 justify-center relative z-20 w-full pl-2 pr-6">
+                                            
+                                            <div class="bg-slate-50 dark:bg-slate-900/50 p-2.5 px-3.5 rounded-xl border border-slate-100 dark:border-slate-700/50 shadow-sm">
+                                                <p class="text-[9px] font-bold uppercase text-slate-400 tracking-widest mb-0.5">ICCID</p>
+                                                <p class="font-mono text-[13px] leading-tight font-bold text-slate-800 dark:text-white truncate"><?= $iccid ?></p>
+                                            </div>
+
+                                            <div class="grid grid-cols-2 gap-2.5">
+                                                <div class="bg-slate-50 dark:bg-slate-900/50 p-2.5 px-3.5 rounded-xl border border-slate-100 dark:border-slate-700/50 shadow-sm">
+                                                    <p class="text-[9px] font-bold uppercase text-slate-400 tracking-widest mb-0.5">MSISDN</p>
+                                                    <p class="font-mono text-[12px] leading-tight font-bold text-slate-800 dark:text-white truncate"><?= $data['msisdn'] ?? '-' ?></p>
+                                                </div>
+                                                
+                                                <div class="bg-slate-50 dark:bg-slate-900/50 p-2.5 px-3.5 rounded-xl border border-slate-100 dark:border-slate-700/50 shadow-sm">
+                                                    <p class="text-[9px] font-bold uppercase text-slate-400 tracking-widest mb-0.5">IMSI</p>
+                                                    <p class="font-mono text-[12px] leading-tight font-bold text-slate-800 dark:text-white truncate"><?= $data['imsi'] ?? '-' ?></p>
+                                                </div>
+                                            </div>
+                                            
+                                        </div>
+                                    </div>
+                                    
                                 </div>
                             </div>
                         </div>
@@ -316,19 +368,60 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
                             </div>
 
                             <div class="grid grid-cols-2 gap-2 mt-2">
-                                <div class="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+                                <div class="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
                                     <span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
                                     <div>
                                         <p class="text-[10px] text-slate-400 uppercase font-bold">Used</p>
                                         <p class="text-xs font-bold text-slate-700 dark:text-white"><?= $usedDisplay ?></p>
                                     </div>
                                 </div>
-                                <div class="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+                                <div class="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
                                     <span class="w-2.5 h-2.5 rounded-full bg-slate-300 dark:bg-slate-600"></span>
                                     <div>
                                         <p class="text-[10px] text-slate-400 uppercase font-bold">Free</p>
                                         <p class="text-xs font-bold text-slate-700 dark:text-white"><?= $remainingDisplay ?></p>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="lg:col-span-1 bg-white dark:bg-darkcard rounded-xl shadow-soft border border-slate-100 dark:border-slate-800 p-6 flex flex-col justify-between">
+                            
+                            <div class="flex items-center justify-between mb-6">
+                                <h3 class="font-bold text-lg text-slate-800 dark:text-white flex items-center gap-2">
+                                    <i class="ph ph-cpu text-indigo-600"></i> Network Status
+                                </h3>
+                                <div class="flex gap-2">
+                                    <?= getStatusBadge($data['lifecycle'] ?? '0') ?>
+                                    <?= $connectionBadge ?>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-y-5 gap-x-4">
+                                <div>
+                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">Expires</p>
+                                    <p class="font-mono text-sm font-bold text-slate-800 dark:text-white truncate"><?= $expireDate ?></p>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">Location</p>
+                                    <div class="flex items-center gap-2">
+                                        <?php if($connFlag): ?>
+                                            <img src="<?= $connFlag ?>" alt="Flag" class="h-3.5 w-auto rounded-sm shadow-sm">
+                                        <?php endif; ?>
+                                        <span class="text-sm font-bold text-slate-700 dark:text-white truncate"><?= $connLocation ?></span>
+                                    </div>
+                                </div>
+                                <div class="col-span-2 border-t border-slate-100 dark:border-slate-700 border-dashed pt-4">
+                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">Network Operator</p>
+                                    <span class="text-sm font-bold text-indigo-600 dark:text-indigo-400 truncate block" title="<?= $connNetwork ?>"><?= $connNetwork ?></span>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">APN</p>
+                                    <span class="text-sm font-mono text-slate-600 dark:text-slate-300"><?= $connApn ?: '-' ?></span>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-1">Last Active</p>
+                                    <span class="text-xs font-mono text-slate-600 dark:text-slate-300"><?= $connLastTime ?></span>
                                 </div>
                             </div>
                         </div>
@@ -390,7 +483,7 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
                         </div>
 
                         <div class="flex gap-1 mb-4 border-b border-slate-100 dark:border-slate-700">
-                            <button onclick="switchBundleTab('valid')" id="tabBtn-valid" class="px-4 py-2 text-sm font-medium border-b-2 border-red-500 text-red-600 dark:text-red-400 transition-colors bg-red-50 dark:bg-red-900/20 rounded-t-lg">
+                            <button onclick="switchBundleTab('valid')" id="tabBtn-valid" class="px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400 transition-colors bg-indigo-50 dark:bg-indigo-900/20 rounded-t-lg">
                                 Valid
                             </button>
                             <button onclick="switchBundleTab('expired')" id="tabBtn-expired" class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white transition-colors">
@@ -619,7 +712,7 @@ $pieChartData = json_encode([$usedBytes, $remainingBytes]);
             const btnValid = document.getElementById('tabBtn-valid');
             const btnExpired = document.getElementById('tabBtn-expired');
             const inactiveClass = "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white bg-transparent";
-            const activeClass = "border-red-500 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-t-lg";
+            const activeClass = "border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded-t-lg";
 
             if(tabName === 'valid') {
                 btnValid.className = "px-4 py-2 text-sm font-medium border-b-2 transition-colors " + activeClass;
