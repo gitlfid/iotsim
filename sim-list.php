@@ -4,27 +4,24 @@ checkLogin();
 
 // --- 0. PREPARATION ---
 $user_id = $_SESSION['user_id'];
-$my_partner_code = 'IDN0000034'; // Default value
 $my_company_id = 0;
 
+// Mengambil token API untuk digunakan pada fetch usage di tabel
+$api_token = function_exists('getDynamicToken') ? getDynamicToken() : '';
+
 // --- GET ALLOWED COMPANIES (Multi-Access Logic) ---
-// Menggunakan fungsi helper dari config.php
 $allowed_comps = getClientIdsForUser($user_id);
 $company_condition = "";
 
 if ($allowed_comps === 'NONE') {
-    // User tidak punya akses ke company manapun -> Blokir data
     $company_condition = " AND 1=0 "; 
 } elseif (is_array($allowed_comps)) {
-    // User punya akses ke beberapa company spesifik
     $ids_str = implode(',', $allowed_comps);
     $company_condition = " AND sims.company_id IN ($ids_str) ";
 } 
-// Jika 'ALL', $company_condition kosong (tampilkan semua)
 
 // --- 1. HANDLE POST ACTIONS ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // Update Tags
     if (isset($_POST['action']) && $_POST['action'] == 'update_tags') {
         $target_iccid = $_POST['sim_id']; 
         $raw_tags = $_POST['tags_input'];
@@ -36,7 +33,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         header("Location: sim-list.php?msg=tags_updated");
         exit();
     }
-    // Bulk Set Project
     if (isset($_POST['action']) && $_POST['action'] == 'bulk_set_project') {
         $project_name = trim($_POST['bulk_project_name']);
         $sim_ids = explode(',', $_POST['bulk_sim_ids']);
@@ -53,12 +49,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         header("Location: sim-list.php?msg=project_updated");
         exit();
     }
-    // Toggle Package
     if (isset($_POST['action']) && $_POST['action'] == 'toggle_package') {
         header('Content-Type: application/json');
         $iccid = trim($_POST['iccid']);
         $state = $_POST['state']; 
-        $token = getDynamicToken();
         $details = getSimDetailFromApi($iccid);
         if (!$details || !isset($details['data']['orderId'])) { echo json_encode(['success'=>false]); exit; }
         $orderId = $details['data']['orderId'];
@@ -88,7 +82,6 @@ $f_tag     = $_GET['tag'] ?? '';
 $f_level   = $_GET['level'] ?? '';
 
 // --- APPLY FILTERS TO QUERY ---
-// Masukkan $company_condition (filter user login) di awal
 $where = "WHERE 1=1 " . $company_condition;
 
 if ($s_keyword) {
@@ -111,13 +104,13 @@ $totalRes = $conn->query("SELECT COUNT(*) as total FROM sims LEFT JOIN companies
 $totalRecords = $totalRes->fetch_assoc()['total'];
 $totalPages = ceil($totalRecords / $pageSize);
 
-$sql = "SELECT sims.*, companies.company_name, companies.project_name as default_project, companies.level 
+// Menambahkan columns companies.partner_code ke dalam query
+$sql = "SELECT sims.*, companies.company_name, companies.project_name as default_project, companies.level, companies.partner_code 
         FROM sims LEFT JOIN companies ON sims.company_id = companies.id $where 
         ORDER BY sims.id DESC LIMIT $offset, $pageSize";
 $result = $conn->query($sql);
 
 // Helper Data (Dropdowns)
-// Filter dropdown company agar hanya muncul yang diizinkan user
 $compWhere = "";
 if (is_array($allowed_comps)) {
     $compWhere = "WHERE id IN (" . implode(',', $allowed_comps) . ")";
@@ -133,7 +126,6 @@ $projArr = [];
 $pQ = $conn->query("SELECT DISTINCT IFNULL(custom_project, project_name) as p_name FROM sims LEFT JOIN companies ON sims.company_id = companies.id $where HAVING p_name IS NOT NULL AND p_name != '' ORDER BY p_name");
 while($r = $pQ->fetch_assoc()) $projArr[] = $r['p_name'];
 
-// Fix explode null
 $tagArr = []; 
 $tQ = $conn->query("SELECT DISTINCT tags FROM sims");
 while($r = $tQ->fetch_assoc()) { 
@@ -166,32 +158,17 @@ $tagArr = array_unique($tagArr); sort($tagArr);
         .col-hidden { display: none !important; }
         .table-font { font-size: 0.75rem; } 
         
-        /* --- STICKY COLUMN LOGIC (STRICT) --- */
-        
-        /* Definisi Lebar & Posisi Strict untuk Kolom Fixed */
-        
-        /* 1. CHECKBOX (Width 50px) */
         .w-col-check { width: 50px; min-width: 50px; max-width: 50px; left: 0; }
-        
-        /* 2. TAGS (Width 100px | Left 50px) */
         .w-col-tags { width: 100px; min-width: 100px; max-width: 100px; left: 50px; }
-        
-        /* 3. ICCID (Width 160px | Left 150px) */
         .w-col-iccid { width: 160px; min-width: 160px; max-width: 160px; left: 150px; }
-        
-        /* 4. CUSTOMER (Width 220px | Left 310px) */
-        /* Note: 50 + 100 + 160 = 310px */
         .w-col-cust { width: 230px; min-width: 230px; max-width: 220px; left: 310px; }
         
-        /* Base Sticky Style */
         .sticky-col { position: sticky; z-index: 20; }
-        th.sticky-col { z-index: 30; } /* Header always top */
+        th.sticky-col { z-index: 30; } 
         
-        /* Border Pemisah untuk Kolom Fixed Terakhir (Customer) */
         .border-r-sticky { border-right: 1px solid #e2e8f0; }
         .dark .border-r-sticky { border-right: 1px solid #374151; }
         
-        /* Background untuk mencegah tembus pandang */
         .bg-sticky-light { background-color: #ffffff; }
         thead .bg-sticky-light { background-color: #f8fafc; } 
         tr:hover .bg-sticky-light { background-color: #f8fafc; }
@@ -200,11 +177,9 @@ $tagArr = array_unique($tagArr); sort($tagArr);
         thead .bg-sticky-dark { background-color: #1F2937; }
         .dark tr:hover .bg-sticky-dark { background-color: #374151; }
 
-        /* Action Column Fixed Right */
         .sticky-right { position: sticky; right: 0; z-index: 20; border-left: 1px solid #e2e8f0; }
         .dark .sticky-right { border-left: 1px solid #374151; }
 
-        /* Pagination Button */
         .btn-page {
             width: 2.25rem; height: 2.25rem; display: flex; align-items: center; justify-content: center;
             border-radius: 0.5rem; border: 1px solid #E2E8F0; font-size: 0.875rem; font-weight: 500; transition: all 0.2s;
@@ -349,13 +324,62 @@ $tagArr = array_unique($tagArr); sort($tagArr);
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
-                                <?php if($result->num_rows > 0): while($row = $result->fetch_assoc()): 
-                                    $iccid = $row['iccid'];
-                                    $displayProject = !empty($row['custom_project']) ? $row['custom_project'] : $row['default_project'];
-                                    $isCustom = !empty($row['custom_project']);
-                                    $usedMB = floatval($row['used_flow']??0) / 1048576;
-                                    $totalMB = floatval($row['total_flow']??0) / 1048576;
-                                    $pct = ($totalMB > 0) ? ($usedMB / $totalMB) * 100 : 0;
+                                <?php if($result->num_rows > 0): 
+                                    while($row = $result->fetch_assoc()): 
+                                        $iccid = $row['iccid'];
+                                        $partner_code = $row['partner_code'];
+                                        $displayProject = !empty($row['custom_project']) ? $row['custom_project'] : $row['default_project'];
+                                        $isCustom = !empty($row['custom_project']);
+                                        
+                                        // --- FETCH USAGE FROM API ---
+                                        $apiTotalBytes = 0;
+                                        $apiUsedBytes = 0;
+
+                                        if (!empty($partner_code) && !empty($iccid) && !empty($api_token)) {
+                                            $ch = curl_init();
+                                            $url = "https://www.lfiotsim.net/prod-api/spoon/sim/details?partnerCode=" . urlencode($partner_code) . "&assetId=" . urlencode($iccid);
+                                            
+                                            curl_setopt($ch, CURLOPT_URL, $url);
+                                            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                                            curl_setopt($ch, CURLOPT_TIMEOUT, 3); // Timeout 3 detik agar page tidak hang
+                                            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                                                'Accept: application/json, text/plain, */*',
+                                                'Authorization: ' . $api_token,
+                                                'Content-Type: application/json'
+                                            ]);
+                                            
+                                            $resAPI = curl_exec($ch);
+                                            curl_close($ch);
+                                            
+                                            if ($resAPI) {
+                                                $json = json_decode($resAPI, true);
+                                                if (isset($json['code']) && $json['code'] == 200 && isset($json['data'])) {
+                                                    $apiTotalBytes = floatval($json['data']['totalFlow'] ?? 0);
+                                                    $apiUsedBytes = floatval($json['data']['usedFlow'] ?? 0);
+                                                } else {
+                                                    // Fallback ke database jika response API kosong/error
+                                                    $apiTotalBytes = floatval($row['total_flow'] ?? 0);
+                                                    $apiUsedBytes = floatval($row['used_flow'] ?? 0);
+                                                }
+                                            } else {
+                                                // Fallback ke database jika cURL gagal
+                                                $apiTotalBytes = floatval($row['total_flow'] ?? 0);
+                                                $apiUsedBytes = floatval($row['used_flow'] ?? 0);
+                                            }
+                                        } else {
+                                            // Fallback ke database jika parameter tidak lengkap
+                                            $apiTotalBytes = floatval($row['total_flow'] ?? 0);
+                                            $apiUsedBytes = floatval($row['used_flow'] ?? 0);
+                                        }
+                                        
+                                        // Menghitung dalam format MB secara murni (membagi 1048576 byte = 1 MB)
+                                        $usedMB = $apiUsedBytes / 1048576;
+                                        $totalMB = $apiTotalBytes / 1048576;
+                                        $pct = ($totalMB > 0) ? ($usedMB / $totalMB) * 100 : 0;
+                                        
+                                        // Format angka MB persis seperti foto yang dilampirkan ("3.52 MB / 20 MB")
+                                        $usedDisplay = number_format($usedMB, 2) . ' MB';
+                                        $totalDisplay = ($totalMB == floor($totalMB)) ? number_format($totalMB, 0) . ' MB' : number_format($totalMB, 2) . ' MB';
                                 ?>
                                 <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
                                     <td class="px-4 py-3 text-center align-middle sticky-col w-col-check bg-sticky-light dark:bg-sticky-dark">
@@ -402,10 +426,10 @@ $tagArr = array_unique($tagArr); sort($tagArr);
                                         <div class="flex flex-col w-full gap-1.5">
                                             <div class="flex justify-between items-baseline">
                                                 <span class="text-xs font-bold text-slate-800 dark:text-white">
-                                                    <?= number_format($usedMB, 2) ?> MB
+                                                    <?= $usedDisplay ?>
                                                 </span>
                                                 <span class="text-xs text-slate-400">
-                                                    / <?= number_format($totalMB, 0) ?> MB
+                                                    / <?= $totalDisplay ?>
                                                 </span>
                                             </div>
 
@@ -416,7 +440,6 @@ $tagArr = array_unique($tagArr); sort($tagArr);
                                             ?>
 
                                             <div class="relative w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
-
                                                 <div
                                                     class="bg-indigo-600 h-full rounded-full transition-all duration-500"
                                                     style="width: <?= min($pct, 100) ?>%"
